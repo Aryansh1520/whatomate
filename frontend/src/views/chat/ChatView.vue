@@ -651,58 +651,58 @@ async function sendMediaMessage() {
     <!-- Contacts List -->
     <div class="w-80 border-r flex flex-col bg-card">
       <!-- Search Header -->
-      <div class="p-4 border-b">
+      <div class="p-2 border-b">
         <div class="relative">
-          <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             v-model="contactsStore.searchQuery"
             placeholder="Search contacts..."
-            class="pl-9"
+            class="pl-8 h-8 text-sm"
           />
         </div>
       </div>
 
       <!-- Contacts -->
       <ScrollArea class="flex-1">
-        <div class="py-2">
+        <div class="py-1">
           <div
             v-for="contact in contactsStore.sortedContacts"
             :key="contact.id"
             :class="[
-              'flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-accent transition-colors',
+              'flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-accent transition-colors',
               contactsStore.currentContact?.id === contact.id && 'bg-accent'
             ]"
             @click="handleContactClick(contact)"
           >
-            <Avatar class="h-12 w-12">
+            <Avatar class="h-9 w-9">
               <AvatarImage :src="contact.avatar_url" />
-              <AvatarFallback>
+              <AvatarFallback class="text-xs">
                 {{ getInitials(contact.name || contact.phone_number) }}
               </AvatarFallback>
             </Avatar>
             <div class="flex-1 min-w-0">
               <div class="flex items-center justify-between">
-                <p class="font-medium truncate">
+                <p class="text-sm font-medium truncate">
                   {{ contact.name || contact.phone_number }}
                 </p>
-                <span class="text-xs text-muted-foreground">
+                <span class="text-[11px] text-muted-foreground">
                   {{ formatContactTime(contact.last_message_at) }}
                 </span>
               </div>
-              <div class="flex items-center justify-between mt-0.5">
-                <p class="text-sm text-muted-foreground truncate">
+              <div class="flex items-center justify-between">
+                <p class="text-xs text-muted-foreground truncate">
                   {{ contact.profile_name || contact.phone_number }}
                 </p>
-                <Badge v-if="contact.unread_count > 0" class="ml-2">
+                <Badge v-if="contact.unread_count > 0" class="ml-2 h-5 text-[10px]">
                   {{ contact.unread_count }}
                 </Badge>
               </div>
             </div>
           </div>
 
-          <div v-if="contactsStore.sortedContacts.length === 0" class="p-4 text-center text-muted-foreground">
-            <User class="h-8 w-8 mx-auto mb-2 opacity-50" />
-            <p>No contacts found</p>
+          <div v-if="contactsStore.sortedContacts.length === 0" class="p-3 text-center text-muted-foreground">
+            <User class="h-6 w-6 mx-auto mb-1.5 opacity-50" />
+            <p class="text-sm">No contacts found</p>
           </div>
         </div>
       </ScrollArea>
@@ -727,65 +727,65 @@ async function sendMediaMessage() {
       <!-- Chat Interface -->
       <template v-else>
         <!-- Chat Header -->
-        <div class="h-16 px-4 border-b flex items-center justify-between bg-card">
-          <div class="flex items-center gap-3">
-            <Avatar class="h-10 w-10">
+        <div class="h-12 px-3 border-b flex items-center justify-between bg-card">
+          <div class="flex items-center gap-2">
+            <Avatar class="h-8 w-8">
               <AvatarImage :src="contactsStore.currentContact.avatar_url" />
-              <AvatarFallback>
+              <AvatarFallback class="text-xs">
                 {{ getInitials(contactsStore.currentContact.name || contactsStore.currentContact.phone_number) }}
               </AvatarFallback>
             </Avatar>
             <div>
-              <div class="flex items-center gap-2">
-                <p class="font-medium">
+              <div class="flex items-center gap-1.5">
+                <p class="text-sm font-medium">
                   {{ contactsStore.currentContact.name || contactsStore.currentContact.phone_number }}
                 </p>
-                <Badge v-if="activeTransferId" variant="outline" class="text-xs border-orange-500 text-orange-500">
-                  Chatbot Paused
+                <Badge v-if="activeTransferId" variant="outline" class="text-[10px] h-5 border-orange-500 text-orange-500">
+                  Paused
                 </Badge>
               </div>
-              <p class="text-xs text-muted-foreground">
+              <p class="text-[11px] text-muted-foreground">
                 {{ contactsStore.currentContact.phone_number }}
               </p>
             </div>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-1">
             <Tooltip v-if="canAssignContacts">
               <TooltipTrigger as-child>
-                <Button variant="ghost" size="icon" @click="isAssignDialogOpen = true">
-                  <UserPlus class="h-5 w-5" />
+                <Button variant="ghost" size="icon" class="h-8 w-8" @click="isAssignDialogOpen = true">
+                  <UserPlus class="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Assign to agent</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger as-child>
-                <Button variant="ghost" size="icon">
-                  <Phone class="h-5 w-5" />
+                <Button variant="ghost" size="icon" class="h-8 w-8">
+                  <Phone class="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Voice call</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger as-child>
-                <Button variant="ghost" size="icon">
-                  <Video class="h-5 w-5" />
+                <Button variant="ghost" size="icon" class="h-8 w-8">
+                  <Video class="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Video call</TooltipContent>
             </Tooltip>
             <Tooltip v-if="activeTransferId">
               <TooltipTrigger as-child>
-                <Button variant="ghost" size="icon" :disabled="isResuming" @click="resumeChatbot">
-                  <Play class="h-5 w-5" />
+                <Button variant="ghost" size="icon" class="h-8 w-8" :disabled="isResuming" @click="resumeChatbot">
+                  <Play class="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Resume Chatbot</TooltipContent>
             </Tooltip>
             <DropdownMenu>
               <DropdownMenuTrigger as-child>
-                <Button variant="ghost" size="icon">
-                  <MoreVertical class="h-5 w-5" />
+                <Button variant="ghost" size="icon" class="h-8 w-8">
+                  <MoreVertical class="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
@@ -813,8 +813,8 @@ async function sendMediaMessage() {
         </div>
 
         <!-- Messages -->
-        <ScrollArea class="flex-1 p-4">
-          <div class="space-y-4">
+        <ScrollArea class="flex-1 p-3">
+          <div class="space-y-2">
             <div
               v-for="message in contactsStore.messages"
               :key="message.id"
@@ -935,16 +935,16 @@ async function sendMediaMessage() {
         </ScrollArea>
 
         <!-- Message Input -->
-        <div class="p-4 border-t bg-card">
-          <form @submit.prevent="sendMessage" class="flex items-end gap-2">
-            <div class="flex gap-1">
+        <div class="px-3 py-2 border-t bg-card">
+          <form @submit.prevent="sendMessage" class="flex items-end gap-1.5">
+            <div class="flex">
               <Tooltip>
                 <TooltipTrigger as-child>
                   <span>
                     <Popover v-model:open="emojiPickerOpen">
                       <PopoverTrigger as-child>
-                        <Button type="button" variant="ghost" size="icon">
-                          <Smile class="h-5 w-5" />
+                        <Button type="button" variant="ghost" size="icon" class="h-8 w-8">
+                          <Smile class="h-4 w-4" />
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent side="top" align="start" class="w-auto p-0">
@@ -976,8 +976,8 @@ async function sendMediaMessage() {
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger as-child>
-                  <Button type="button" variant="ghost" size="icon" @click="openFilePicker">
-                    <Paperclip class="h-5 w-5" />
+                  <Button type="button" variant="ghost" size="icon" class="h-8 w-8" @click="openFilePicker">
+                    <Paperclip class="h-4 w-4" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Attach file</TooltipContent>
@@ -993,7 +993,7 @@ async function sendMediaMessage() {
             <Textarea
               v-model="messageInput"
               placeholder="Type a message..."
-              class="flex-1 min-h-[40px] max-h-[120px] resize-none"
+              class="flex-1 min-h-[36px] max-h-[100px] resize-none text-sm"
               :rows="1"
               @keydown.enter.exact.prevent="sendMessage"
             />
@@ -1002,9 +1002,10 @@ async function sendMediaMessage() {
                 <Button
                   type="submit"
                   size="icon"
+                  class="h-8 w-8"
                   :disabled="!messageInput.trim() || isSending"
                 >
-                  <Send class="h-5 w-5" />
+                  <Send class="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Send message</TooltipContent>

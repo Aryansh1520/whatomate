@@ -54,13 +54,13 @@
     @apply border-border;
   }
   html {
-    font-size: 16px;
+    font-size: 14px;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
   body {
     @apply bg-background text-foreground font-sans;
-    line-height: 1.7;
+    line-height: 1.5;
     font-weight: 400;
   }
   h1, h2, h3, h4, h5, h6 {
@@ -68,19 +68,19 @@
     margin-top: 0;
   }
   h1 {
-    @apply text-3xl;
+    @apply text-2xl;
     line-height: 1.25;
   }
   h2 {
-    @apply text-2xl;
-    line-height: 1.5;
+    @apply text-xl;
+    line-height: 1.4;
   }
   h3 {
-    @apply text-xl;
-    line-height: 1.6;
+    @apply text-lg;
+    line-height: 1.5;
   }
   h4, h5, h6 {
-    @apply text-lg;
+    @apply text-base;
   }
   a {
     @apply text-primary font-medium;
@@ -107,9 +107,9 @@
   background: hsl(var(--muted-foreground) / 0.5);
 }
 
-/* WhatsApp chat bubble styles */
+/* WhatsApp chat bubble styles - compact */
 .chat-bubble {
-  @apply relative px-3 py-2 rounded-lg max-w-[80%];
+  @apply relative px-2.5 py-1.5 rounded-lg max-w-[75%] text-sm;
 }
 
 .chat-bubble-incoming {
@@ -126,7 +126,7 @@
 }
 
 .chat-bubble-time {
-  @apply text-xs mt-1;
+  @apply text-[11px] mt-0.5 leading-tight;
 }
 
 .chat-bubble-time span {

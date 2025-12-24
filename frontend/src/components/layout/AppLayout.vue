@@ -147,14 +147,14 @@ const handleLogout = async () => {
       ]"
     >
       <!-- Logo -->
-      <div class="flex h-16 items-center justify-between px-4 border-b">
+      <div class="flex h-12 items-center justify-between px-3 border-b">
         <RouterLink to="/" class="flex items-center gap-2">
-          <div class="h-8 w-8 rounded-lg bg-primary flex items-center justify-center">
-            <MessageSquare class="h-5 w-5 text-primary-foreground" />
+          <div class="h-7 w-7 rounded-md bg-primary flex items-center justify-center">
+            <MessageSquare class="h-4 w-4 text-primary-foreground" />
           </div>
           <span
             v-if="!isCollapsed"
-            class="font-bold text-lg text-foreground"
+            class="font-semibold text-sm text-foreground"
           >
             Whatomate
           </span>
@@ -162,29 +162,29 @@ const handleLogout = async () => {
         <Button
           variant="ghost"
           size="icon"
-          class="h-8 w-8"
+          class="h-7 w-7"
           @click="toggleSidebar"
         >
-          <ChevronLeft v-if="!isCollapsed" class="h-4 w-4" />
-          <ChevronRight v-else class="h-4 w-4" />
+          <ChevronLeft v-if="!isCollapsed" class="h-3.5 w-3.5" />
+          <ChevronRight v-else class="h-3.5 w-3.5" />
         </Button>
       </div>
 
       <!-- Navigation -->
-      <ScrollArea class="flex-1 py-4">
-        <nav class="space-y-1 px-2">
+      <ScrollArea class="flex-1 py-2">
+        <nav class="space-y-0.5 px-2">
           <template v-for="item in navigation" :key="item.path">
             <RouterLink
               :to="item.path"
               :class="[
-                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                'flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors',
                 item.active
                   ? 'bg-primary/10 text-primary'
                   : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
                 isCollapsed && 'justify-center px-2'
               ]"
             >
-              <component :is="item.icon" class="h-5 w-5 shrink-0" />
+              <component :is="item.icon" class="h-4 w-4 shrink-0" />
               <span v-if="!isCollapsed">{{ item.name }}</span>
             </RouterLink>
 
@@ -195,13 +195,13 @@ const handleLogout = async () => {
                 :key="child.path"
                 :to="child.path"
                 :class="[
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ml-4',
+                  'flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors ml-4',
                   route.path === child.path
                     ? 'bg-primary/10 text-primary'
                     : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                 ]"
               >
-                <component :is="child.icon" class="h-4 w-4 shrink-0" />
+                <component :is="child.icon" class="h-3.5 w-3.5 shrink-0" />
                 <span>{{ child.name }}</span>
               </RouterLink>
             </template>
@@ -210,83 +210,83 @@ const handleLogout = async () => {
       </ScrollArea>
 
       <!-- User section -->
-      <div class="border-t p-4">
+      <div class="border-t p-2">
         <Popover v-model:open="isUserMenuOpen">
           <PopoverTrigger as-child>
             <Button
               variant="ghost"
               :class="[
-                'flex items-center w-full h-auto px-2 py-2 gap-3',
+                'flex items-center w-full h-auto px-2 py-1.5 gap-2',
                 isCollapsed && 'justify-center'
               ]"
             >
-              <Avatar class="h-8 w-8">
+              <Avatar class="h-7 w-7">
                 <AvatarImage :src="undefined" />
-                <AvatarFallback>
+                <AvatarFallback class="text-xs">
                   {{ getInitials(authStore.user?.full_name || 'U') }}
                 </AvatarFallback>
               </Avatar>
               <div v-if="!isCollapsed" class="flex flex-col items-start text-left">
-                <span class="text-sm font-medium truncate max-w-[140px]">
+                <span class="text-[13px] font-medium truncate max-w-[140px]">
                   {{ authStore.user?.full_name }}
                 </span>
-                <span class="text-xs text-muted-foreground truncate max-w-[140px]">
+                <span class="text-[11px] text-muted-foreground truncate max-w-[140px]">
                   {{ authStore.user?.email }}
                 </span>
               </div>
             </Button>
           </PopoverTrigger>
-          <PopoverContent side="top" align="start" class="w-56 p-2">
-            <div class="text-sm font-medium px-2 py-1.5 text-muted-foreground">My Account</div>
+          <PopoverContent side="top" align="start" class="w-52 p-1.5">
+            <div class="text-xs font-medium px-2 py-1 text-muted-foreground">My Account</div>
             <Separator class="my-1" />
             <RouterLink to="/profile">
               <Button
                 variant="ghost"
-                class="w-full justify-start px-2 py-1.5 h-auto font-normal"
+                class="w-full justify-start px-2 py-1 h-auto text-[13px] font-normal"
                 @click="isUserMenuOpen = false"
               >
-                <User class="mr-2 h-4 w-4" />
+                <User class="mr-2 h-3.5 w-3.5" />
                 <span>Profile</span>
               </Button>
             </RouterLink>
             <Separator class="my-1" />
-            <div class="text-sm font-medium px-2 py-1.5 text-muted-foreground">Theme</div>
-            <div class="flex gap-1 px-2 py-1">
+            <div class="text-xs font-medium px-2 py-1 text-muted-foreground">Theme</div>
+            <div class="flex gap-0.5 px-1.5 py-1">
               <Button
                 variant="ghost"
                 size="icon"
-                class="h-8 w-8"
+                class="h-7 w-7"
                 :class="colorMode === 'light' && 'bg-accent'"
                 @click="setColorMode('light')"
               >
-                <Sun class="h-4 w-4" />
+                <Sun class="h-3.5 w-3.5" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
-                class="h-8 w-8"
+                class="h-7 w-7"
                 :class="colorMode === 'dark' && 'bg-accent'"
                 @click="setColorMode('dark')"
               >
-                <Moon class="h-4 w-4" />
+                <Moon class="h-3.5 w-3.5" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
-                class="h-8 w-8"
+                class="h-7 w-7"
                 :class="colorMode === 'system' && 'bg-accent'"
                 @click="setColorMode('system')"
               >
-                <Monitor class="h-4 w-4" />
+                <Monitor class="h-3.5 w-3.5" />
               </Button>
             </div>
             <Separator class="my-1" />
             <Button
               variant="ghost"
-              class="w-full justify-start px-2 py-1.5 h-auto font-normal"
+              class="w-full justify-start px-2 py-1 h-auto text-[13px] font-normal"
               @click="handleLogout"
             >
-              <LogOut class="mr-2 h-4 w-4" />
+              <LogOut class="mr-2 h-3.5 w-3.5" />
               <span>Log out</span>
             </Button>
           </PopoverContent>
