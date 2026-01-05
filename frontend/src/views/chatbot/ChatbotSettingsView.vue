@@ -75,6 +75,7 @@ const chatbotSettings = ref({
   allow_automated_outside_hours: true,
   allow_agent_queue_pickup: true,
   assign_to_same_agent: true,
+  agent_current_conversation_only: false,
   transfer_message: ''
 })
 
@@ -203,6 +204,7 @@ onMounted(async () => {
         allow_automated_outside_hours: data.settings.allow_automated_outside_hours !== false,
         allow_agent_queue_pickup: data.settings.allow_agent_queue_pickup !== false,
         assign_to_same_agent: data.settings.assign_to_same_agent !== false,
+        agent_current_conversation_only: data.settings.agent_current_conversation_only === true,
         transfer_message: ''
       }
       const aiEnabledValue = data.settings.ai_enabled === true
@@ -257,7 +259,8 @@ async function saveChatbotSettings() {
       fallback_buttons: chatbotSettings.value.fallback_buttons.filter(btn => btn.title.trim()),
       session_timeout_minutes: chatbotSettings.value.session_timeout_minutes,
       allow_agent_queue_pickup: chatbotSettings.value.allow_agent_queue_pickup,
-      assign_to_same_agent: chatbotSettings.value.assign_to_same_agent
+      assign_to_same_agent: chatbotSettings.value.assign_to_same_agent,
+      agent_current_conversation_only: chatbotSettings.value.agent_current_conversation_only
     })
     toast.success('Chatbot settings saved')
   } catch (error) {
@@ -553,6 +556,17 @@ function isUserSelected(userId: string): boolean {
                   <Switch
                     :checked="chatbotSettings.assign_to_same_agent"
                     @update:checked="chatbotSettings.assign_to_same_agent = $event"
+                  />
+                </div>
+
+                <div class="flex items-center justify-between py-2">
+                  <div>
+                    <p class="font-medium text-sm">Agents See Current Conversation Only</p>
+                    <p class="text-xs text-muted-foreground">When enabled, agents only see messages from the current session. Managers and admins always see full history.</p>
+                  </div>
+                  <Switch
+                    :checked="chatbotSettings.agent_current_conversation_only"
+                    @update:checked="chatbotSettings.agent_current_conversation_only = $event"
                   />
                 </div>
 

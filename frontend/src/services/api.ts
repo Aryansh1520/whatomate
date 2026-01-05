@@ -135,7 +135,7 @@ export const contactsService = {
 }
 
 export const messagesService = {
-  list: (contactId: string, params?: { page?: number; limit?: number }) =>
+  list: (contactId: string, params?: { page?: number; limit?: number; before_id?: string }) =>
     api.get(`/contacts/${contactId}/messages`, { params }),
   send: (contactId: string, data: { type: string; content: any; reply_to_message_id?: string }) =>
     api.post(`/contacts/${contactId}/messages`, data),

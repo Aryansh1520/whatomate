@@ -82,6 +82,7 @@ const { isDark } = useColorMode()
 
 const messageInput = ref('')
 const messagesEndRef = ref<HTMLElement | null>(null)
+const messagesScrollAreaRef = ref<InstanceType<typeof ScrollArea> | null>(null)
 const messageInputRef = ref<InstanceType<typeof Textarea> | null>(null)
 const isSending = ref(false)
 const isAssignDialogOpen = ref(false)
@@ -186,7 +187,53 @@ onUnmounted(() => {
     URL.revokeObjectURL(url)
   })
   mediaBlobUrls.value = {}
+  // Remove scroll listener
+  removeScrollListener()
 })
+
+// Infinite scroll for loading older messages
+let scrollViewport: HTMLElement | null = null
+
+function setupScrollListener() {
+  // Get the viewport element from ScrollArea
+  const scrollArea = messagesScrollAreaRef.value?.$el
+  if (scrollArea) {
+    scrollViewport = scrollArea.querySelector('[data-radix-scroll-area-viewport]')
+    if (scrollViewport) {
+      scrollViewport.addEventListener('scroll', handleScroll)
+    }
+  }
+}
+
+function removeScrollListener() {
+  if (scrollViewport) {
+    scrollViewport.removeEventListener('scroll', handleScroll)
+    scrollViewport = null
+  }
+}
+
+async function handleScroll(event: Event) {
+  const target = event.target as HTMLElement
+  // Trigger load when scrolled near top (within 100px)
+  if (target.scrollTop < 100 && contactsStore.hasMoreMessages && !contactsStore.isLoadingOlderMessages) {
+    const currentScrollHeight = target.scrollHeight
+    const currentScrollTop = target.scrollTop
+
+    await contactsStore.fetchOlderMessages(contactsStore.currentContact!.id)
+
+    // Preserve scroll position after prepending messages
+    await nextTick()
+    const newScrollHeight = target.scrollHeight
+    target.scrollTop = newScrollHeight - currentScrollHeight + currentScrollTop
+
+    // Load media for any new messages
+    try {
+      loadMediaForMessages()
+    } catch (e) {
+      console.error('Error loading media:', e)
+    }
+  }
+}
 
 // Watch for route changes
 watch(contactId, async (newId) => {
@@ -202,6 +249,9 @@ watch(contactId, async (newId) => {
 async function selectContact(id: string) {
   const contact = contactsStore.contacts.find(c => c.id === id)
   if (contact) {
+    // Remove old scroll listener before switching contacts
+    removeScrollListener()
+
     contactsStore.setCurrentContact(contact)
     await contactsStore.fetchMessages(id)
     // Tell WebSocket server which contact we're viewing
@@ -215,7 +265,11 @@ async function selectContact(id: string) {
       console.error('Error loading media:', e)
     }
     // Scroll after a brief delay to ensure content is rendered (instant on initial load)
-    setTimeout(() => scrollToBottom(true), 50)
+    setTimeout(() => {
+      scrollToBottom(true)
+      // Setup scroll listener for infinite scroll after initial scroll
+      setupScrollListener()
+    }, 50)
   }
 }
 
@@ -970,8 +1024,15 @@ async function sendMediaMessage() {
         </div>
 
         <!-- Messages -->
-        <ScrollArea class="flex-1 p-3">
+        <ScrollArea ref="messagesScrollAreaRef" class="flex-1 p-3">
           <div class="space-y-2">
+            <!-- Loading indicator for older messages -->
+            <div v-if="contactsStore.isLoadingOlderMessages" class="flex justify-center py-2">
+              <div class="flex items-center gap-2 text-muted-foreground text-sm">
+                <div class="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                <span>Loading older messages...</span>
+              </div>
+            </div>
             <template
               v-for="(message, index) in contactsStore.messages"
               :key="message.id"

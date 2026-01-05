@@ -71,6 +71,8 @@ export const useContactsStore = defineStore('contacts', () => {
   const messages = ref<Message[]>([])
   const isLoading = ref(false)
   const isLoadingMessages = ref(false)
+  const isLoadingOlderMessages = ref(false)
+  const hasMoreMessages = ref(false)
   const searchQuery = ref('')
   const replyingTo = ref<Message | null>(null)
 
@@ -123,13 +125,39 @@ export const useContactsStore = defineStore('contacts', () => {
     isLoadingMessages.value = true
     try {
       const response = await messagesService.list(contactId, params)
-      // API returns { status: "success", data: { messages: [...] } }
+      // API returns { status: "success", data: { messages: [...], has_more: boolean } }
       const data = response.data.data || response.data
       messages.value = data.messages || []
+      hasMoreMessages.value = data.has_more === true
     } catch (error) {
       console.error('Failed to fetch messages:', error)
     } finally {
       isLoadingMessages.value = false
+    }
+  }
+
+  async function fetchOlderMessages(contactId: string) {
+    if (isLoadingOlderMessages.value || !hasMoreMessages.value || messages.value.length === 0) {
+      return
+    }
+
+    isLoadingOlderMessages.value = true
+    try {
+      // Get the oldest message ID for cursor-based pagination
+      const oldestMessageId = messages.value[0].id
+      const response = await messagesService.list(contactId, { before_id: oldestMessageId })
+      const data = response.data.data || response.data
+      const olderMessages = data.messages || []
+
+      if (olderMessages.length > 0) {
+        // Prepend older messages (they come in chronological order, oldest first)
+        messages.value = [...olderMessages, ...messages.value]
+      }
+      hasMoreMessages.value = data.has_more === true
+    } catch (error) {
+      console.error('Failed to fetch older messages:', error)
+    } finally {
+      isLoadingOlderMessages.value = false
     }
   }
 
@@ -206,6 +234,7 @@ export const useContactsStore = defineStore('contacts', () => {
 
   function clearMessages() {
     messages.value = []
+    hasMoreMessages.value = false
   }
 
   function updateMessageReactions(messageId: string, reactions: Reaction[]) {
@@ -221,6 +250,8 @@ export const useContactsStore = defineStore('contacts', () => {
     messages,
     isLoading,
     isLoadingMessages,
+    isLoadingOlderMessages,
+    hasMoreMessages,
     searchQuery,
     replyingTo,
     filteredContacts,
@@ -228,6 +259,7 @@ export const useContactsStore = defineStore('contacts', () => {
     fetchContacts,
     fetchContact,
     fetchMessages,
+    fetchOlderMessages,
     sendMessage,
     sendTemplate,
     addMessage,

@@ -23,6 +23,7 @@ type ChatbotSettings struct {
 	AllowAutomatedOutsideHours bool       `gorm:"default:true" json:"allow_automated_outside_hours"` // Allow flows/keywords/AI outside business hours
 	AllowAgentQueuePickup      bool       `gorm:"default:true" json:"allow_agent_queue_pickup"`      // Allow agents to pick transfers from queue
 	AssignToSameAgent          bool       `gorm:"default:true" json:"assign_to_same_agent"`          // Auto-assign transfers to contact's existing agent
+	AgentCurrentConversationOnly bool     `gorm:"default:false" json:"agent_current_conversation_only"` // Agents see only current session messages
 
 	// SLA Settings
 	SLAEnabled             bool `gorm:"default:false" json:"sla_enabled"`                  // Enable SLA tracking

@@ -23,9 +23,10 @@ type ChatbotSettingsResponse struct {
 	BusinessHours              []map[string]interface{} `json:"business_hours"`
 	OutOfHoursMessage          string                   `json:"out_of_hours_message"`
 	AllowAutomatedOutsideHours bool                     `json:"allow_automated_outside_hours"`
-	AllowAgentQueuePickup      bool                     `json:"allow_agent_queue_pickup"`
-	AssignToSameAgent          bool                     `json:"assign_to_same_agent"`
-	AIEnabled                  bool                     `json:"ai_enabled"`
+	AllowAgentQueuePickup        bool                     `json:"allow_agent_queue_pickup"`
+	AssignToSameAgent            bool                     `json:"assign_to_same_agent"`
+	AgentCurrentConversationOnly bool                     `json:"agent_current_conversation_only"`
+	AIEnabled                    bool                     `json:"ai_enabled"`
 	AIProvider            string                   `json:"ai_provider"`
 	AIModel               string                   `json:"ai_model"`
 	AIMaxTokens           int                      `json:"ai_max_tokens"`
@@ -152,9 +153,10 @@ func (a *App) GetChatbotSettings(r *fastglue.Request) error {
 		BusinessHours:              businessHours,
 		OutOfHoursMessage:          settings.OutOfHoursMessage,
 		AllowAutomatedOutsideHours: settings.AllowAutomatedOutsideHours,
-		AllowAgentQueuePickup:      settings.AllowAgentQueuePickup,
-		AssignToSameAgent:          settings.AssignToSameAgent,
-		AIEnabled:                  settings.AIEnabled,
+		AllowAgentQueuePickup:        settings.AllowAgentQueuePickup,
+		AssignToSameAgent:            settings.AssignToSameAgent,
+		AgentCurrentConversationOnly: settings.AgentCurrentConversationOnly,
+		AIEnabled:                    settings.AIEnabled,
 		AIProvider:            settings.AIProvider,
 		AIModel:               settings.AIModel,
 		AIMaxTokens:           settings.AIMaxTokens,
@@ -194,9 +196,10 @@ func (a *App) UpdateChatbotSettings(r *fastglue.Request) error {
 		BusinessHours              *[]map[string]interface{}  `json:"business_hours"`
 		OutOfHoursMessage          *string                    `json:"out_of_hours_message"`
 		AllowAutomatedOutsideHours *bool                      `json:"allow_automated_outside_hours"`
-		AllowAgentQueuePickup      *bool                      `json:"allow_agent_queue_pickup"`
-		AssignToSameAgent          *bool                      `json:"assign_to_same_agent"`
-		AIEnabled                  *bool                      `json:"ai_enabled"`
+		AllowAgentQueuePickup        *bool                      `json:"allow_agent_queue_pickup"`
+		AssignToSameAgent            *bool                      `json:"assign_to_same_agent"`
+		AgentCurrentConversationOnly *bool                      `json:"agent_current_conversation_only"`
+		AIEnabled                    *bool                      `json:"ai_enabled"`
 		AIProvider                 *string                    `json:"ai_provider"`
 		AIAPIKey                   *string                    `json:"ai_api_key"`
 		AIModel                    *string                    `json:"ai_model"`
@@ -276,6 +279,9 @@ func (a *App) UpdateChatbotSettings(r *fastglue.Request) error {
 	}
 	if req.AssignToSameAgent != nil {
 		settings.AssignToSameAgent = *req.AssignToSameAgent
+	}
+	if req.AgentCurrentConversationOnly != nil {
+		settings.AgentCurrentConversationOnly = *req.AgentCurrentConversationOnly
 	}
 	if req.AIEnabled != nil {
 		settings.AIEnabled = *req.AIEnabled

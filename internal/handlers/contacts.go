@@ -242,6 +242,7 @@ func (a *App) GetContact(r *fastglue.Request) error {
 
 // GetMessages returns messages for a contact
 // Agents can only access messages for their assigned contacts
+// Supports cursor-based pagination with before_id for loading older messages
 func (a *App) GetMessages(r *fastglue.Request) error {
 	orgID := r.RequestCtx.UserValue("organization_id").(uuid.UUID)
 	userID, _ := r.RequestCtx.UserValue("user_id").(uuid.UUID)
@@ -263,25 +264,73 @@ func (a *App) GetMessages(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusNotFound, "Contact not found", nil, "")
 	}
 
-	// Pagination
-	page, _ := strconv.Atoi(string(r.RequestCtx.QueryArgs().Peek("page")))
+	// Pagination parameters
 	limit, _ := strconv.Atoi(string(r.RequestCtx.QueryArgs().Peek("limit")))
+	beforeIDStr := string(r.RequestCtx.QueryArgs().Peek("before_id"))
 
-	if page < 1 {
-		page = 1
-	}
 	if limit < 1 || limit > 100 {
 		limit = 50
 	}
 
-	var messages []models.Message
-	var total int64
-
+	// Build base query
 	msgQuery := a.DB.Where("contact_id = ?", contactID)
+
+	// Check if agent should only see current conversation
+	if userRole == "agent" {
+		var settings models.ChatbotSettings
+		if err := a.DB.Where("organization_id = ?", orgID).First(&settings).Error; err == nil {
+			if settings.AgentCurrentConversationOnly {
+				// Find the most recent session for this contact
+				var session models.ChatbotSession
+				if err := a.DB.Where("contact_id = ? AND organization_id = ?", contactID, orgID).
+					Order("started_at DESC").First(&session).Error; err == nil {
+					// Filter messages to only those from this session onwards
+					msgQuery = msgQuery.Where("created_at >= ?", session.StartedAt)
+				}
+			}
+		}
+	}
+
+	// Count total messages (with session filter if applied)
+	var total int64
 	msgQuery.Model(&models.Message{}).Count(&total)
 
+	// Cursor-based pagination: load messages before a specific ID
+	if beforeIDStr != "" {
+		beforeID, err := uuid.Parse(beforeIDStr)
+		if err == nil {
+			// Get the created_at of the before_id message
+			var beforeMsg models.Message
+			if err := a.DB.Where("id = ?", beforeID).First(&beforeMsg).Error; err == nil {
+				msgQuery = msgQuery.Where("created_at < ?", beforeMsg.CreatedAt)
+			}
+		}
+		// For loading older messages, order DESC and limit, then reverse
+		var messages []models.Message
+		if err := msgQuery.Preload("ReplyToMessage").Order("created_at DESC").Limit(limit).Find(&messages).Error; err != nil {
+			a.Log.Error("Failed to list messages", "error", err)
+			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to list messages", nil, "")
+		}
+		// Reverse to get chronological order
+		for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+			messages[i], messages[j] = messages[j], messages[i]
+		}
+
+		response := a.buildMessagesResponse(messages)
+		return r.SendEnvelope(map[string]any{
+			"messages": response,
+			"total":    total,
+			"has_more": len(messages) == limit,
+		})
+	}
+
+	// Default: load most recent messages (page 1)
+	page, _ := strconv.Atoi(string(r.RequestCtx.QueryArgs().Peek("page")))
+	if page < 1 {
+		page = 1
+	}
+
 	// For chat, we want the most recent messages
-	// Fetch in DESC order (newest first), then reverse for display
 	// Calculate offset from the end for pagination
 	offset := int(total) - (page * limit)
 	if offset < 0 {
@@ -289,15 +338,29 @@ func (a *App) GetMessages(r *fastglue.Request) error {
 		offset = 0
 	}
 
+	var messages []models.Message
 	if err := msgQuery.Preload("ReplyToMessage").Order("created_at ASC").Offset(offset).Limit(limit).Find(&messages).Error; err != nil {
 		a.Log.Error("Failed to list messages", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to list messages", nil, "")
 	}
 
-	// Convert to response format
+	// Mark messages as read
+	a.markMessagesAsRead(orgID, contactID, &contact)
+
+	response := a.buildMessagesResponse(messages)
+	return r.SendEnvelope(map[string]any{
+		"messages": response,
+		"total":    total,
+		"page":     page,
+		"limit":    limit,
+		"has_more": offset > 0,
+	})
+}
+
+// buildMessagesResponse converts messages to response format
+func (a *App) buildMessagesResponse(messages []models.Message) []MessageResponse {
 	response := make([]MessageResponse, len(messages))
 	for i, m := range messages {
-		// Parse content as JSON if it's text
 		var content any
 		if m.MessageType == "text" {
 			content = map[string]string{"body": m.Content}
@@ -323,7 +386,6 @@ func (a *App) GetMessages(r *fastglue.Request) error {
 			UpdatedAt:       m.UpdatedAt,
 		}
 
-		// Add reply context if this is a reply
 		if m.IsReply && m.ReplyToMessageID != nil {
 			replyToID := m.ReplyToMessageID.String()
 			msgResp.ReplyToMessageID = &replyToID
@@ -337,7 +399,6 @@ func (a *App) GetMessages(r *fastglue.Request) error {
 			}
 		}
 
-		// Extract reactions from Metadata
 		if m.Metadata != nil {
 			if reactionsRaw, ok := m.Metadata["reactions"]; ok {
 				if reactionsArray, ok := reactionsRaw.([]interface{}); ok {
@@ -359,21 +420,21 @@ func (a *App) GetMessages(r *fastglue.Request) error {
 
 		response[i] = msgResp
 	}
+	return response
+}
 
-	// Get unread incoming messages for auto read receipt
+// markMessagesAsRead marks messages as read and sends read receipts
+func (a *App) markMessagesAsRead(orgID uuid.UUID, contactID uuid.UUID, contact *models.Contact) {
 	var unreadMessages []models.Message
 	a.DB.Where("contact_id = ? AND direction = ? AND status != ?", contactID, "incoming", "read").
 		Find(&unreadMessages)
 
-	// Mark incoming messages as read
 	a.DB.Model(&models.Message{}).
 		Where("contact_id = ? AND direction = ?", contactID, "incoming").
 		Update("status", "read")
 
-	// Update contact read status
-	a.DB.Model(&contact).Update("is_read", true)
+	a.DB.Model(contact).Update("is_read", true)
 
-	// Send read receipts to WhatsApp if auto read receipt is enabled
 	if len(unreadMessages) > 0 && contact.WhatsAppAccount != "" {
 		var account models.WhatsAppAccount
 		if err := a.DB.Where("organization_id = ? AND name = ?", orgID, contact.WhatsAppAccount).First(&account).Error; err == nil {
@@ -395,13 +456,6 @@ func (a *App) GetMessages(r *fastglue.Request) error {
 			}
 		}
 	}
-
-	return r.SendEnvelope(map[string]any{
-		"messages": response,
-		"total":    total,
-		"page":     page,
-		"limit":    limit,
-	})
 }
 
 // SendMessageRequest represents a send message request
