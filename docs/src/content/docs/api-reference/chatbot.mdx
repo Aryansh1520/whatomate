@@ -356,8 +356,8 @@ Configure which session variables are displayed in the Contact Info Panel:
         "default_collapsed": false,
         "order": 1,
         "fields": [
-          {"key": "customer_name", "label": "Name", "order": 1},
-          {"key": "customer_email", "label": "Email", "order": 2}
+          {"key": "customer_name", "label": "Name", "order": 1, "display_type": "text"},
+          {"key": "status", "label": "Status", "order": 2, "display_type": "badge", "color": "success"}
         ]
       }
     ]
@@ -384,6 +384,8 @@ Configure which session variables are displayed in the Contact Info Panel:
 | `key` | string | Session variable name (from `store_as` or response mapping) |
 | `label` | string | Display label for the field |
 | `order` | number | Field display order within section |
+| `display_type` | string | How to render the value: `text` (default), `badge`, or `tag` |
+| `color` | string | Color for badge/tag: `default`, `success`, `warning`, `error`, or `info` |
 
 ## Agent Transfers
 

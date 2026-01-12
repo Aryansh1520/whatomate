@@ -337,12 +337,36 @@ In the Flow Builder, scroll down to the **Panel Display Settings** section:
    For each section, add fields from the available variables:
    - **Variable** - Select from available session variables
    - **Label** - Display label for the field (e.g., "Name", "Email", "Order ID")
+   - **Display Type** - How to render the value (Text, Badge, or Tag)
+   - **Color** - Color coding for badges/tags
 
 4. **Reorder Sections and Fields**
 
    Drag sections and fields to reorder them as needed.
 
 </Steps>
+
+### Display Types
+
+Choose how each field value is displayed:
+
+| Type | Description | Best For |
+|------|-------------|----------|
+| **Text** | Plain text (default) | Names, descriptions, long values |
+| **Badge** | Rounded pill shape | Status values, categories |
+| **Tag** | Rectangular label | IDs, codes, short labels |
+
+### Color Options
+
+For Badge and Tag display types, choose a color:
+
+| Color | Description | Use Case |
+|-------|-------------|----------|
+| **Default** | Muted gray | Neutral information |
+| **Success** | Green | Positive status (completed, active, approved) |
+| **Warning** | Yellow | Attention needed (pending, processing) |
+| **Error** | Red | Negative status (failed, cancelled, rejected) |
+| **Info** | Blue | Informational (new, updated) |
 
 ### Panel Features
 
@@ -352,23 +376,24 @@ In the Flow Builder, scroll down to the **Panel Display Settings** section:
 | **Auto-Open** | Panel automatically opens when viewing contacts with configured data |
 | **Collapsible Sections** | Expand/collapse sections to focus on relevant information |
 | **Multi-Column Layout** | Display fields in 1 or 2 columns per section |
+| **Display Types** | Show values as text, badges, or tags with color coding |
 
 ### Example Configuration
 
 For a customer support flow that collects name, email, and order details:
 
 **Section 1: Customer Info** (1 column)
-- `customer_name` → "Name"
-- `customer_email` → "Email"
+- `customer_name` → "Name" (Text)
+- `customer_email` → "Email" (Text)
 
 **Section 2: Order Details** (2 columns, collapsible)
-- `order_id` → "Order ID"
-- `order_status` → "Status"
-- `order_date` → "Date"
-- `order_total` → "Total"
+- `order_id` → "Order ID" (Tag, Info)
+- `order_status` → "Status" (Badge, Success/Warning/Error based on value)
+- `order_date` → "Date" (Text)
+- `order_total` → "Total" (Text)
 
 <Aside type="tip">
-  Use 2-column layouts for sections with many short fields like order details. Use 1-column layouts for sections with longer values like addresses or descriptions.
+  Use Badge with color coding for status fields to make them visually stand out. Use Text for longer values like names and descriptions.
 </Aside>
 
 ## Agent Transfers
