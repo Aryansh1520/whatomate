@@ -1317,11 +1317,6 @@ func (a *App) GetContactSessionData(r *fastglue.Request) error {
 		response.SessionID = &session.ID
 		response.FlowID = session.CurrentFlowID
 
-		// Parse session data
-		if session.SessionData != nil {
-			response.SessionData = session.SessionData
-		}
-
 		// Get the flow to retrieve panel config
 		// First try current_flow_id, then fall back to _flow_id in session_data
 		var flowID *uuid.UUID
@@ -1343,6 +1338,32 @@ func (a *App) GetContactSessionData(r *fastglue.Request) error {
 				// Use panel config directly from flow (it's already JSONB/map)
 				if len(flow.PanelConfig) > 0 {
 					response.PanelConfig = flow.PanelConfig
+
+					// Only include session data for configured fields (reduce payload)
+					if session.SessionData != nil {
+						configuredKeys := make(map[string]bool)
+						if sections, ok := flow.PanelConfig["sections"].([]any); ok {
+							for _, sec := range sections {
+								if section, ok := sec.(map[string]any); ok {
+									if fields, ok := section["fields"].([]any); ok {
+										for _, f := range fields {
+											if field, ok := f.(map[string]any); ok {
+												if key, ok := field["key"].(string); ok {
+													configuredKeys[key] = true
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						// Copy only configured fields to response
+						for key := range configuredKeys {
+							if val, exists := session.SessionData[key]; exists {
+								response.SessionData[key] = val
+							}
+						}
+					}
 				}
 			}
 		}
