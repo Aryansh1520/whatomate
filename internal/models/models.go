@@ -91,10 +91,15 @@ type Organization struct {
 	Slug     string `gorm:"size:100;uniqueIndex;not null" json:"slug"`
 	Settings JSONB  `gorm:"type:jsonb;default:'{}'" json:"settings"`
 
+	// Validity window (UTC only)
+	ValidFrom time.Time `gorm:"type:timestamptz;not null" json:"valid_from"`
+	ValidTo   time.Time `gorm:"type:timestamptz;not null" json:"valid_to"`
+
 	// Relations
 	Users            []User            `gorm:"foreignKey:OrganizationID" json:"users,omitempty"`
 	WhatsAppAccounts []WhatsAppAccount `gorm:"foreignKey:OrganizationID" json:"whatsapp_accounts,omitempty"`
 }
+
 
 func (Organization) TableName() string {
 	return "organizations"
@@ -347,6 +352,27 @@ type Message struct {
 func (Message) TableName() string {
 	return "messages"
 }
+
+type OrganizationValidityAssignment struct {
+	BaseModel
+
+	OrganizationID uuid.UUID `gorm:"type:uuid;not null;index" json:"organization_id"`
+
+	ValidFrom time.Time `gorm:"type:timestamptz;not null" json:"valid_from"`
+	ValidTo   time.Time `gorm:"type:timestamptz;not null" json:"valid_to"`
+
+	// Price stored in INR paise or rupees? (see note below)
+	PriceINR int64 `gorm:"not null" json:"price_inr"`
+
+	// Optional but strongly recommended
+	AssignedByUserID uuid.UUID `gorm:"type:uuid;not null" json:"assigned_by_user_id"`
+}
+
+func (OrganizationValidityAssignment) TableName() string {
+	return "organization_validity_assignments"
+}
+
+
 
 // Template represents a WhatsApp message template
 type Template struct {

@@ -225,6 +225,52 @@ func OrganizationContext(db *gorm.DB) fastglue.FastMiddleware {
 	}
 }
 
+// OrganizationValidity enforces valid_from / valid_to window
+func OrganizationValidity() fastglue.FastMiddleware {
+	return func(r *fastglue.Request) *fastglue.Request {
+
+		orgAny := r.RequestCtx.UserValue(ContextKeyOrganization)
+		if orgAny == nil {
+			_ = r.SendErrorEnvelope(
+				fasthttp.StatusUnauthorized,
+				"Organization context missing",
+				nil,
+				"",
+			)
+			return nil
+		}
+
+		org, ok := orgAny.(*models.Organization)
+		if !ok {
+			_ = r.SendErrorEnvelope(
+				fasthttp.StatusInternalServerError,
+				"Invalid organization context",
+				nil,
+				"",
+			)
+			return nil
+		}
+
+		now := time.Now().UTC()
+
+		if now.Before(org.ValidFrom) || now.After(org.ValidTo) {
+			_ = r.SendErrorEnvelope(
+				fasthttp.StatusForbidden,
+				"Organization access expired",
+				map[string]interface{}{
+					"valid_from": org.ValidFrom,
+					"valid_to":   org.ValidTo,
+				},
+				"",
+			)
+			return nil
+		}
+
+		return r
+	}
+}
+
+
 // RequireRole checks if user has required role
 func RequireRole(roles ...string) fastglue.FastMiddleware {
 	return func(r *fastglue.Request) *fastglue.Request {

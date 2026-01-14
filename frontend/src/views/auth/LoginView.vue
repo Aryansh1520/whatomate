@@ -97,7 +97,7 @@ const initiateSSO = (provider: string) => {
             <MessageSquare class="h-7 w-7 text-primary-foreground" />
           </div>
         </div>
-        <CardTitle class="text-2xl font-bold">Welcome to Whatomate</CardTitle>
+        <CardTitle class="text-2xl font-bold">Welcome to Respondr</CardTitle>
         <CardDescription>
           Enter your credentials to access your account
         </CardDescription>
@@ -158,14 +158,7 @@ const initiateSSO = (provider: string) => {
         </Button>
       </CardContent>
 
-      <CardFooter class="flex flex-col pt-0">
-        <p class="text-sm text-center text-muted-foreground">
-          Don't have an account?
-          <RouterLink to="/register" class="text-primary hover:underline">
-            Sign up
-          </RouterLink>
-        </p>
-      </CardFooter>
+
     </Card>
   </div>
 </template>

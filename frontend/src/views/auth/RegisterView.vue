@@ -66,7 +66,7 @@ const handleRegister = async () => {
         </div>
         <CardTitle class="text-2xl font-bold">Create an account</CardTitle>
         <CardDescription>
-          Start your WhatsApp Business journey with Whatomate
+          Start your WhatsApp Business journey with Respondr
         </CardDescription>
       </CardHeader>
       <form @submit.prevent="handleRegister">

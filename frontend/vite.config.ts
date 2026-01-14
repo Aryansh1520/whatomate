@@ -15,11 +15,11 @@ export default defineConfig({
     allowedHosts: ['roland-min-assessments-lesser.trycloudflare.com', '.trycloudflare.com'],
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8086',
         changeOrigin: true
       },
       '/ws': {
-        target: 'ws://localhost:8080',
+        target: 'ws://localhost:8086',
         ws: true
       }
     }

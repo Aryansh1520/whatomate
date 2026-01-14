@@ -379,7 +379,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 
 	// Auth routes (public)
 	g.POST("/api/auth/login", app.Login)
-	g.POST("/api/auth/register", app.Register)
+	// g.POST("/api/auth/register", app.Register)
 	g.POST("/api/auth/refresh", app.RefreshToken)
 
 	// SSO routes (public)
@@ -396,32 +396,60 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 
 	// For protected routes, we'll use a path-based middleware approach
 	// Apply auth middleware globally but check path in the middleware
-	g.Before(func(r *fastglue.Request) *fastglue.Request {
-		// Skip auth for OPTIONS preflight requests (handled by CORS middleware)
-		if string(r.RequestCtx.Method()) == "OPTIONS" {
-			return r
-		}
-		path := string(r.RequestCtx.Path())
-		// Skip auth for public routes
-		if path == "/health" || path == "/ready" ||
-			path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/auth/refresh" ||
-			path == "/api/webhook" || path == "/ws" {
-			return r
-		}
-		// Skip auth for SSO routes (they handle their own auth via state tokens)
-		if len(path) >= 13 && path[:13] == "/api/auth/sso" {
-			return r
-		}
-		// Skip auth for custom action redirects (uses one-time token)
-		if len(path) >= 28 && path[:28] == "/api/custom-actions/redirect" {
-			return r
-		}
-		// Apply auth for all other /api routes (supports both JWT and API key)
-		if len(path) > 4 && path[:4] == "/api" {
-			return middleware.AuthWithDB(app.Config.JWT.Secret, app.DB)(r)
-		}
+g.Before(func(r *fastglue.Request) *fastglue.Request {
+	// Skip auth for OPTIONS preflight requests (handled by CORS middleware)
+	if string(r.RequestCtx.Method()) == "OPTIONS" {
 		return r
-	})
+	}
+
+	path := string(r.RequestCtx.Path())
+
+	// Skip auth for public routes
+// NOTE: /api/auth/register intentionally NOT skipped
+if path == "/health" || path == "/ready" ||
+	path == "/api/auth/login" || path == "/api/auth/refresh" ||
+	path == "/api/webhook" || path == "/ws" {
+	return r
+}
+
+
+	// Skip auth for SSO routes (they handle their own auth via state tokens)
+	if len(path) >= 13 && path[:13] == "/api/auth/sso" {
+		return r
+	}
+
+	// Skip auth for custom action redirects (uses one-time token)
+	if len(path) >= 28 && path[:28] == "/api/custom-actions/redirect" {
+		return r
+	}
+
+	// Apply auth + org context + validity for all other /api routes
+	if len(path) > 4 && path[:4] == "/api" {
+
+		// 1. Auth (JWT / API key)
+		r = middleware.AuthWithDB(app.Config.JWT.Secret, app.DB)(r)
+		if r == nil {
+			return nil
+		}
+
+		// 2. Load organization & user from DB
+		r = middleware.OrganizationContext(app.DB)(r)
+		if r == nil {
+			return nil
+		}
+
+		// 3. Enforce organization validity window
+		r = middleware.OrganizationValidity()(r)
+		if r == nil {
+			return nil
+		}
+
+		return r
+	}
+
+	return r
+})
+
 
 	// Role-based access control middleware
 	g.Before(func(r *fastglue.Request) *fastglue.Request {

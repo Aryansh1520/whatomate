@@ -70,6 +70,7 @@ func GetMigrationModels() []MigrationModel {
 		{"Message", &models.Message{}},
 		{"Template", &models.Template{}},
 		{"WhatsAppFlow", &models.WhatsAppFlow{}},
+		{"OrganizationValidityAssignment", &models.OrganizationValidityAssignment{}},
 
 		// Bulk & Notifications
 		{"BulkMessageCampaign", &models.BulkMessageCampaign{}},

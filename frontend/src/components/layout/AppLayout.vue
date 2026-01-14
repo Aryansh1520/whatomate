@@ -313,7 +313,7 @@ const handleLogout = async () => {
             v-if="!isCollapsed"
             class="font-semibold text-sm text-foreground"
           >
-            Whatomate
+            Respondr
           </span>
         </RouterLink>
         <Button
