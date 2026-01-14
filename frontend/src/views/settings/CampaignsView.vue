@@ -148,6 +148,7 @@ const accounts = ref<Account[]>([])
 const isLoading = ref(true)
 const isCreating = ref(false)
 const showCreateDialog = ref(false)
+const editingCampaignId = ref<string | null>(null) // null = create mode, string = edit mode
 
 // Filter state
 const filterStatus = ref<string>('all')
@@ -556,6 +557,54 @@ function resetForm() {
     name: '',
     whatsapp_account: '',
     template_id: ''
+  }
+}
+
+function openEditDialog(campaign: Campaign) {
+  editingCampaignId.value = campaign.id
+  newCampaign.value = {
+    name: campaign.name,
+    whatsapp_account: campaign.whatsapp_account || '',
+    template_id: campaign.template_id || ''
+  }
+  showCreateDialog.value = true
+}
+
+function openCreateDialog() {
+  editingCampaignId.value = null
+  resetForm()
+  showCreateDialog.value = true
+}
+
+async function saveCampaign() {
+  if (!newCampaign.value.name) {
+    toast.error('Please enter a campaign name')
+    return
+  }
+
+  if (editingCampaignId.value) {
+    // Update existing campaign
+    isCreating.value = true
+    try {
+      await campaignsService.update(editingCampaignId.value, {
+        name: newCampaign.value.name,
+        whatsapp_account: newCampaign.value.whatsapp_account,
+        template_id: newCampaign.value.template_id
+      })
+      toast.success('Campaign updated successfully')
+      showCreateDialog.value = false
+      editingCampaignId.value = null
+      resetForm()
+      await fetchCampaigns()
+    } catch (error: any) {
+      const message = error.response?.data?.message || 'Failed to update campaign'
+      toast.error(message)
+    } finally {
+      isCreating.value = false
+    }
+  } else {
+    // Create new campaign
+    await createCampaign()
   }
 }
 
@@ -1231,18 +1280,17 @@ async function addRecipientsFromCSV() {
           </Popover>
         </div>
 
+        <Button variant="outline" size="sm" @click="openCreateDialog">
+          <Plus class="h-4 w-4 mr-2" />
+          Create Campaign
+        </Button>
+
         <Dialog v-model:open="showCreateDialog">
-          <DialogTrigger as-child>
-            <Button variant="outline" size="sm">
-              <Plus class="h-4 w-4 mr-2" />
-              Create Campaign
-            </Button>
-          </DialogTrigger>
           <DialogContent class="sm:max-w-[500px]">
             <DialogHeader>
-              <DialogTitle>Create New Campaign</DialogTitle>
+              <DialogTitle>{{ editingCampaignId ? 'Edit Campaign' : 'Create New Campaign' }}</DialogTitle>
               <DialogDescription>
-                Create a new bulk messaging campaign. You can add recipients after creation.
+                {{ editingCampaignId ? 'Update campaign details.' : 'Create a new bulk messaging campaign. You can add recipients after creation.' }}
               </DialogDescription>
             </DialogHeader>
             <div class="grid gap-4 py-4">
@@ -1289,12 +1337,12 @@ async function addRecipientsFromCSV() {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" size="sm" @click="showCreateDialog = false" :disabled="isCreating">
+              <Button variant="outline" size="sm" @click="showCreateDialog = false; editingCampaignId = null" :disabled="isCreating">
                 Cancel
               </Button>
-              <Button size="sm" @click="createCampaign" :disabled="isCreating">
+              <Button size="sm" @click="saveCampaign" :disabled="isCreating">
                 <Loader2 v-if="isCreating" class="h-4 w-4 mr-2 animate-spin" />
-                Create Campaign
+                {{ editingCampaignId ? 'Save Changes' : 'Create Campaign' }}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1499,9 +1547,9 @@ async function addRecipientsFromCSV() {
                   </TooltipTrigger>
                   <TooltipContent>Add Recipients</TooltipContent>
                 </Tooltip>
-                <Tooltip>
+                <Tooltip v-if="campaign.status === 'draft'">
                   <TooltipTrigger as-child>
-                    <Button variant="ghost" size="icon">
+                    <Button variant="ghost" size="icon" @click="openEditDialog(campaign)">
                       <Pencil class="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>

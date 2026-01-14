@@ -591,6 +591,7 @@ if path == "/health" || path == "/ready" ||
 	g.POST("/api/flows/{id}/save-to-meta", app.SaveFlowToMeta)
 	g.POST("/api/flows/{id}/publish", app.PublishFlow)
 	g.POST("/api/flows/{id}/deprecate", app.DeprecateFlow)
+	g.POST("/api/flows/{id}/duplicate", app.DuplicateFlow)
 	g.POST("/api/flows/sync", app.SyncFlows)
 
 	// Bulk Campaigns
