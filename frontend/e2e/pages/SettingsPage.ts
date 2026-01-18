@@ -1,0 +1,337 @@
+import { Page, Locator, expect } from '@playwright/test'
+import { BasePage } from './BasePage'
+
+/**
+ * Base class for settings pages that use cards/grid layout
+ */
+export class CardGridPage extends BasePage {
+  readonly heading: Locator
+  readonly addButton: Locator
+  readonly searchInput: Locator
+  readonly categoryFilter: Locator
+  readonly dialog: Locator
+  readonly alertDialog: Locator
+
+  constructor(page: Page, options: { headingText: string; addButtonText: string }) {
+    super(page)
+    this.heading = page.locator('h1').filter({ hasText: options.headingText })
+    this.addButton = page.getByRole('button', { name: new RegExp(options.addButtonText, 'i') }).first()
+    this.searchInput = page.locator('input[placeholder*="Search"]')
+    this.categoryFilter = page.locator('button[role="combobox"]').first()
+    this.dialog = page.locator('[role="dialog"][data-state="open"]')
+    this.alertDialog = page.locator('[role="alertdialog"]')
+  }
+
+  async openCreateDialog() {
+    await this.addButton.click()
+    await this.dialog.waitFor({ state: 'visible' })
+  }
+
+  async search(term: string) {
+    await this.searchInput.fill(term)
+    await this.page.waitForLoadState('networkidle')
+  }
+
+  async filterByCategory(category: string) {
+    await this.categoryFilter.click()
+    await this.page.locator('[role="option"]').filter({ hasText: category }).click()
+    await this.page.waitForLoadState('networkidle')
+  }
+
+  // Dialog helpers
+  getDialogInput(index = 0): Locator {
+    return this.dialog.locator('input').nth(index)
+  }
+
+  getDialogTextarea(): Locator {
+    return this.dialog.locator('textarea')
+  }
+
+  getDialogCombobox(): Locator {
+    return this.dialog.locator('button[role="combobox"]')
+  }
+
+  async submitDialog(buttonText = 'Create') {
+    await this.dialog.getByRole('button', { name: new RegExp(`^${buttonText}$`, 'i') }).click()
+  }
+
+  async cancelDialog() {
+    await this.dialog.getByRole('button', { name: /Cancel/i }).click()
+    await this.dialog.waitFor({ state: 'hidden' })
+  }
+
+  // Card helpers
+  getCardByHeading(heading: string): Locator {
+    return this.page.getByRole('heading', { name: heading })
+      .locator('xpath=ancestor::div[contains(@class, "rounded")]').first()
+  }
+
+  async clickCardButton(heading: string, buttonIndex: number) {
+    const card = this.getCardByHeading(heading)
+    await card.locator('button').nth(buttonIndex).click()
+  }
+
+  // Alert dialog helpers
+  async confirmDelete() {
+    await this.alertDialog.getByRole('button', { name: 'Delete' }).click()
+    await this.alertDialog.waitFor({ state: 'hidden' })
+  }
+
+  async cancelDelete() {
+    await this.alertDialog.getByRole('button', { name: 'Cancel' }).click()
+    await this.alertDialog.waitFor({ state: 'hidden' })
+  }
+
+  // Toast helpers
+  async expectToast(text: string | RegExp) {
+    const toast = this.page.locator('[data-sonner-toast]').filter({ hasText: text })
+    await expect(toast).toBeVisible({ timeout: 5000 })
+    return toast
+  }
+
+  async dismissToast(text?: string | RegExp) {
+    const toast = text
+      ? this.page.locator('[data-sonner-toast]').filter({ hasText: text })
+      : this.page.locator('[data-sonner-toast]').first()
+    if (await toast.isVisible()) {
+      await toast.click()
+    }
+  }
+
+  // Assertions
+  async expectPageVisible() {
+    await expect(this.heading).toBeVisible()
+  }
+
+  async expectDialogVisible() {
+    await expect(this.dialog).toBeVisible()
+  }
+
+  async expectDialogHidden() {
+    await expect(this.dialog).not.toBeVisible()
+  }
+}
+
+/**
+ * Base class for settings pages that use table layout
+ */
+export class TableSettingsPage extends BasePage {
+  readonly heading: Locator
+  readonly addButton: Locator
+  readonly table: Locator
+  readonly dialog: Locator
+  readonly alertDialog: Locator
+
+  constructor(page: Page, options: { headingText: string; addButtonText: string }) {
+    super(page)
+    this.heading = page.locator('h1').filter({ hasText: options.headingText })
+    this.addButton = page.getByRole('button', { name: new RegExp(options.addButtonText, 'i') })
+    this.table = page.locator('table')
+    this.dialog = page.locator('[role="dialog"][data-state="open"]')
+    this.alertDialog = page.locator('[role="alertdialog"]')
+  }
+
+  async openCreateDialog() {
+    await this.addButton.click()
+    await this.dialog.waitFor({ state: 'visible' })
+  }
+
+  // Table helpers
+  getRow(text: string): Locator {
+    return this.page.locator('tr').filter({ hasText: text })
+  }
+
+  async clickRowButton(rowText: string, buttonIndex: number) {
+    const row = this.getRow(rowText)
+    await row.locator('td').last().locator('button').nth(buttonIndex).click()
+  }
+
+  async editRow(rowText: string) {
+    await this.clickRowButton(rowText, 0) // Edit is usually first button
+    await this.dialog.waitFor({ state: 'visible' })
+  }
+
+  async deleteRow(rowText: string) {
+    await this.clickRowButton(rowText, 1) // Delete is usually second button
+    await this.alertDialog.waitFor({ state: 'visible' })
+  }
+
+  async toggleRowSwitch(rowText: string) {
+    const row = this.getRow(rowText)
+    await row.locator('button[role="switch"]').click()
+  }
+
+  // Dialog helpers
+  getDialogInput(id: string): Locator {
+    return this.dialog.locator(`input#${id}`)
+  }
+
+  getDialogTextarea(id: string): Locator {
+    return this.dialog.locator(`textarea#${id}`)
+  }
+
+  getDialogRadio(name: string): Locator {
+    return this.dialog.getByRole('radio', { name: new RegExp(name, 'i') })
+  }
+
+  async submitDialog(buttonText = 'Create') {
+    await this.dialog.getByRole('button', { name: new RegExp(`^${buttonText}$`, 'i') }).click()
+  }
+
+  async cancelDialog() {
+    await this.dialog.getByRole('button', { name: /Cancel/i }).click()
+    await this.dialog.waitFor({ state: 'hidden' })
+  }
+
+  // Alert dialog helpers
+  async confirmDelete() {
+    await this.alertDialog.getByRole('button', { name: 'Delete' }).click()
+    await this.alertDialog.waitFor({ state: 'hidden' })
+  }
+
+  async cancelDelete() {
+    await this.alertDialog.getByRole('button', { name: 'Cancel' }).click()
+    await this.alertDialog.waitFor({ state: 'hidden' })
+  }
+
+  // Toast helpers
+  async expectToast(text: string | RegExp) {
+    const toast = this.page.locator('[data-sonner-toast]').filter({ hasText: text })
+    await expect(toast).toBeVisible({ timeout: 5000 })
+    return toast
+  }
+
+  async dismissToast(text?: string | RegExp) {
+    const toast = text
+      ? this.page.locator('[data-sonner-toast]').filter({ hasText: text })
+      : this.page.locator('[data-sonner-toast]').first()
+    if (await toast.isVisible()) {
+      await toast.click()
+    }
+  }
+
+  // Assertions
+  async expectPageVisible() {
+    await expect(this.heading).toBeVisible()
+  }
+
+  async expectDialogVisible() {
+    await expect(this.dialog).toBeVisible()
+  }
+
+  async expectDialogHidden() {
+    await expect(this.dialog).not.toBeVisible()
+  }
+
+  async expectRowExists(text: string) {
+    await expect(this.table).toContainText(text)
+  }
+
+  async expectRowNotExists(text: string) {
+    await expect(this.table).not.toContainText(text)
+  }
+}
+
+/**
+ * Canned Responses Page
+ */
+export class CannedResponsesPage extends CardGridPage {
+  constructor(page: Page) {
+    super(page, { headingText: 'Canned Responses', addButtonText: 'Add Response' })
+  }
+
+  async goto() {
+    await this.page.goto('/settings/canned-responses')
+    await this.page.waitForLoadState('networkidle')
+  }
+
+  async fillResponseForm(name: string, content: string, shortcut?: string, category?: string) {
+    await this.getDialogInput(0).fill(name)
+    if (shortcut) {
+      await this.getDialogInput(1).fill(shortcut)
+    }
+    await this.getDialogTextarea().fill(content)
+    if (category) {
+      await this.getDialogCombobox().click()
+      await this.page.locator('[role="option"]').filter({ hasText: category }).click()
+    }
+  }
+
+  // Card buttons: 0=copy, 1=edit, 2=delete
+  async editResponse(name: string) {
+    await this.clickCardButton(name, 1)
+    await this.dialog.waitFor({ state: 'visible' })
+  }
+
+  async deleteResponse(name: string) {
+    await this.clickCardButton(name, 2)
+    await this.alertDialog.waitFor({ state: 'visible' })
+  }
+}
+
+/**
+ * Custom Actions Page
+ */
+export class CustomActionsPage extends TableSettingsPage {
+  constructor(page: Page) {
+    super(page, { headingText: 'Custom Actions', addButtonText: 'Add Action' })
+    // Override heading to use text locator since this page uses CardTitle not h1
+    this.heading = page.locator('text=Custom Actions').first()
+  }
+
+  async goto() {
+    await this.page.goto('/settings/custom-actions')
+    await this.page.waitForLoadState('networkidle')
+  }
+
+  async fillWebhookAction(name: string, url: string) {
+    await this.getDialogInput('name').fill(name)
+    await this.getDialogInput('url').fill(url)
+  }
+
+  async fillUrlAction(name: string, url: string) {
+    await this.getDialogInput('name').fill(name)
+    await this.getDialogRadio('Open URL').click()
+    await this.getDialogInput('url').fill(url)
+  }
+
+  async fillJsAction(name: string, code: string) {
+    await this.getDialogInput('name').fill(name)
+    await this.getDialogRadio('JavaScript').click()
+    await this.getDialogTextarea('code').fill(code)
+  }
+}
+
+/**
+ * API Keys Page
+ */
+export class ApiKeysPage extends TableSettingsPage {
+  constructor(page: Page) {
+    super(page, { headingText: 'API Keys', addButtonText: 'Create API Key' })
+  }
+
+  async goto() {
+    await this.page.goto('/settings/api-keys')
+    await this.page.waitForLoadState('networkidle')
+  }
+
+  async fillApiKeyForm(name: string, expiry?: string) {
+    await this.page.locator('input#name').fill(name)
+    if (expiry) {
+      await this.page.locator('input#expiry').fill(expiry)
+    }
+  }
+
+  async submitDialog(buttonText = 'Create Key') {
+    await this.dialog.getByRole('button', { name: new RegExp(buttonText, 'i') }).click()
+  }
+
+  async expectKeyCreatedDialog() {
+    await expect(this.dialog).toContainText('API Key Created')
+    await expect(this.dialog).toContainText('whm_')
+  }
+
+  async closeKeyCreatedDialog() {
+    await this.page.getByRole('button', { name: 'Done' }).click()
+  }
+}
