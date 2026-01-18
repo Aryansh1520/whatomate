@@ -360,7 +360,7 @@ onMounted(() => {
         <DialogHeader>
           <DialogTitle>{{ isEditing ? 'Edit Webhook' : 'Add Webhook' }}</DialogTitle>
           <DialogDescription>
-            Configure a webhook to receive events from Respondr
+            Configure a webhook to receive events from RelayOne
           </DialogDescription>
         </DialogHeader>
         <div class="space-y-4 py-4">
