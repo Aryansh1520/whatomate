@@ -636,7 +636,7 @@ function formatPreview(text: string, samples: any[]): string {
                   variant="ghost"
                   size="sm"
                   @click="openEditDialog(template)"
-                  :disabled="template.status === 'APPROVED' || template.status === 'PENDING'"
+                  :disabled="template.status === 'PENDING'"
                 >
                   <Pencil class="h-4 w-4" />
                 </Button>

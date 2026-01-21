@@ -262,8 +262,9 @@ const fetchAgents = async () => {
   try {
     const response = await usersService.list()
     const data = response.data.data || response.data
-    // Filter to only show agents
-    agents.value = (data.users || data || []).filter((u: Agent) => u.role === 'agent')
+    // Show all users for filtering (granular roles)
+    agents.value = (data.users || data || [])
+      .map((u: any) => ({ id: u.id, full_name: u.full_name, role: u.role?.name }))
   } catch (error) {
     console.error('Failed to load agents:', error)
   }
