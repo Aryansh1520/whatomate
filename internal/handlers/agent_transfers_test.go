@@ -14,7 +14,89 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
+	"gorm.io/gorm"
 )
+
+// getOrCreateTransferTestPermissions gets existing permissions or creates them for testing.
+func getOrCreateTransferTestPermissions(t *testing.T, db *gorm.DB) []models.Permission {
+	t.Helper()
+
+	var existingPerms []models.Permission
+	if err := db.Order("resource, action").Find(&existingPerms).Error; err == nil && len(existingPerms) > 0 {
+		return existingPerms
+	}
+
+	// Create all default permissions if none exist
+	perms := models.DefaultPermissions()
+	for i := range perms {
+		perms[i].ID = uuid.New()
+	}
+	require.NoError(t, db.Create(&perms).Error)
+	return perms
+}
+
+// createTransferTestRole creates a role with specified permissions for testing.
+func createTransferTestRole(t *testing.T, db *gorm.DB, orgID uuid.UUID, name string, permissionKeys []string) *models.CustomRole {
+	t.Helper()
+
+	// Get all permissions
+	perms := getOrCreateTransferTestPermissions(t, db)
+
+	// Filter to only the ones we need
+	permMap := make(map[string]models.Permission)
+	for _, p := range perms {
+		key := p.Resource + ":" + p.Action
+		permMap[key] = p
+	}
+
+	var rolePerms []models.Permission
+	for _, key := range permissionKeys {
+		if p, ok := permMap[key]; ok {
+			rolePerms = append(rolePerms, p)
+		}
+	}
+
+	role := &models.CustomRole{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		OrganizationID: orgID,
+		Name:           name + "_" + uuid.New().String()[:8],
+		Description:    "Test role for " + name,
+		IsSystem:       false,
+		IsDefault:      false,
+		Permissions:    rolePerms,
+	}
+	require.NoError(t, db.Create(role).Error)
+	return role
+}
+
+// createTransferAdminRole creates an admin role with all permissions for testing.
+func createTransferAdminRole(t *testing.T, db *gorm.DB, orgID uuid.UUID) *models.CustomRole {
+	t.Helper()
+
+	allPerms := models.DefaultPermissions()
+	var permKeys []string
+	for _, p := range allPerms {
+		permKeys = append(permKeys, p.Resource+":"+p.Action)
+	}
+	return createTransferTestRole(t, db, orgID, "admin", permKeys)
+}
+
+// createTransferAgentRole creates an agent role with limited permissions for testing.
+// This creates a role that doesn't have transfers:write, so agents can only see
+// their own transfers + general queue and use self-assign behavior.
+func createTransferAgentRole(t *testing.T, db *gorm.DB, orgID uuid.UUID) *models.CustomRole {
+	t.Helper()
+
+	// Agent permissions WITHOUT transfers:write for proper queue isolation
+	agentPerms := []string{
+		"chat:read", "chat:write",
+		"contacts:read",
+		"analytics.agents:read",
+		"transfers:read", "transfers:pickup", // No transfers:write
+		"canned_responses:read",
+	}
+	return createTransferTestRole(t, db, orgID, "agent", agentPerms)
+}
 
 // agentTransfersTestApp creates an App instance for agent transfers testing.
 func agentTransfersTestApp(t *testing.T) *handlers.App {
@@ -53,16 +135,26 @@ func createTransferTestOrg(t *testing.T, app *handlers.App) *models.Organization
 	return org
 }
 
-// createTransferTestUser creates a test user with unique identifiers.
-func createTransferTestUser(t *testing.T, app *handlers.App, orgID uuid.UUID, role models.Role) *models.User {
+// createTransferTestUser creates a test user with admin role.
+func createTransferTestUser(t *testing.T, app *handlers.App, orgID uuid.UUID, roleID *uuid.UUID) *models.User {
 	t.Helper()
+
+	// If no role provided, create an admin role for backward compatibility
+	var actualRoleID *uuid.UUID
+	if roleID != nil {
+		actualRoleID = roleID
+	} else {
+		role := createTransferAdminRole(t, app.DB, orgID)
+		actualRoleID = &role.ID
+	}
+
 	user := &models.User{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
 		OrganizationID: orgID,
 		Email:          "transfer-test-" + uuid.New().String() + "@example.com",
 		PasswordHash:   "hashed",
 		FullName:       "Transfer Test User",
-		Role:           role,
+		RoleID:         actualRoleID,
 		IsActive:       true,
 	}
 	err := app.DB.Create(user).Error
@@ -104,9 +196,12 @@ func createTestContact(t *testing.T, app *handlers.App, orgID uuid.UUID) *models
 	return contact
 }
 
-// createTestAgent creates a test agent user in the database.
+// createTestAgent creates a test agent user with agent role in the database.
 func createTestAgent(t *testing.T, app *handlers.App, orgID uuid.UUID) *models.User {
 	t.Helper()
+
+	// Create agent role with agent-level permissions
+	role := createTransferAgentRole(t, app.DB, orgID)
 
 	uniqueID := uuid.New().String()[:8]
 	agent := &models.User{
@@ -115,7 +210,7 @@ func createTestAgent(t *testing.T, app *handlers.App, orgID uuid.UUID) *models.U
 		Email:          "agent-" + uniqueID + "@example.com",
 		PasswordHash:   "hashed",
 		FullName:       "Test Agent " + uniqueID,
-		Role:           models.RoleAgent,
+		RoleID:         &role.ID,
 		IsActive:       true,
 		IsAvailable:    true,
 	}
@@ -161,7 +256,7 @@ func createTestTeam(t *testing.T, app *handlers.App, orgID uuid.UUID, memberIDs 
 			BaseModel: models.BaseModel{ID: uuid.New()},
 			TeamID:    team.ID,
 			UserID:    memberID,
-			Role:      models.RoleAgent,
+			Role:      models.TeamRoleAgent,
 		}
 		require.NoError(t, app.DB.Create(member).Error)
 	}
@@ -169,11 +264,10 @@ func createTestTeam(t *testing.T, app *handlers.App, orgID uuid.UUID, memberIDs 
 	return team
 }
 
-// setTransferAuthContext sets organization, user, and role in request context.
-func setTransferAuthContext(req *fastglue.Request, orgID, userID uuid.UUID, role models.Role) {
+// setTransferAuthContext sets organization and user in request context.
+func setTransferAuthContext(req *fastglue.Request, orgID, userID uuid.UUID) {
 	req.RequestCtx.SetUserValue("organization_id", orgID)
 	req.RequestCtx.SetUserValue("user_id", userID)
-	req.RequestCtx.SetUserValue("role", role)
 }
 
 // --- ListAgentTransfers Tests ---
@@ -181,7 +275,7 @@ func setTransferAuthContext(req *fastglue.Request, orgID, userID uuid.UUID, role
 func TestApp_ListAgentTransfers_Success(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	contact := createTestContact(t, app, org.ID)
@@ -192,7 +286,7 @@ func TestApp_ListAgentTransfers_Success(t *testing.T) {
 	_ = createTestTransfer(t, app, org.ID, contact.ID, account.Name, models.TransferStatusResumed, &agent.ID)
 
 	req := testutil.NewGETRequest(t)
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 
 	err := app.ListAgentTransfers(req)
 	require.NoError(t, err)
@@ -220,7 +314,7 @@ func TestApp_ListAgentTransfers_Success(t *testing.T) {
 func TestApp_ListAgentTransfers_FilterByStatus(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	contact := createTestContact(t, app, org.ID)
@@ -231,7 +325,7 @@ func TestApp_ListAgentTransfers_FilterByStatus(t *testing.T) {
 	_ = createTestTransfer(t, app, org.ID, contact.ID, account.Name, models.TransferStatusResumed, &agent.ID)
 
 	req := testutil.NewGETRequest(t)
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 	testutil.SetQueryParam(req, "status", models.TransferStatusActive)
 
 	err := app.ListAgentTransfers(req)
@@ -270,7 +364,7 @@ func TestApp_ListAgentTransfers_AgentRoleFiltering(t *testing.T) {
 
 	// Agent should only see their assigned transfers + general queue
 	req := testutil.NewGETRequest(t)
-	setTransferAuthContext(req, org.ID, agent.ID, models.RoleAgent)
+	setTransferAuthContext(req, org.ID, agent.ID)
 
 	err := app.ListAgentTransfers(req)
 	require.NoError(t, err)
@@ -292,7 +386,7 @@ func TestApp_ListAgentTransfers_AgentRoleFiltering(t *testing.T) {
 func TestApp_ListAgentTransfers_Pagination(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	contact := createTestContact(t, app, org.ID)
@@ -304,7 +398,7 @@ func TestApp_ListAgentTransfers_Pagination(t *testing.T) {
 
 	// Request with limit and offset
 	req := testutil.NewGETRequest(t)
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 	testutil.SetQueryParam(req, "limit", "2")
 	testutil.SetQueryParam(req, "offset", "1")
 
@@ -334,7 +428,7 @@ func TestApp_ListAgentTransfers_Pagination(t *testing.T) {
 func TestApp_CreateAgentTransfer_Success(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	contact := createTestContact(t, app, org.ID)
@@ -345,7 +439,7 @@ func TestApp_CreateAgentTransfer_Success(t *testing.T) {
 		"notes":            "Test transfer",
 		"source":           models.TransferSourceManual,
 	})
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 
 	err := app.CreateAgentTransfer(req)
 	require.NoError(t, err)
@@ -370,7 +464,7 @@ func TestApp_CreateAgentTransfer_Success(t *testing.T) {
 func TestApp_CreateAgentTransfer_WithAgent(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	contact := createTestContact(t, app, org.ID)
@@ -382,7 +476,7 @@ func TestApp_CreateAgentTransfer_WithAgent(t *testing.T) {
 		"agent_id":         agent.ID.String(),
 		"notes":            "Assigned to specific agent",
 	})
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 
 	err := app.CreateAgentTransfer(req)
 	require.NoError(t, err)
@@ -404,14 +498,14 @@ func TestApp_CreateAgentTransfer_WithAgent(t *testing.T) {
 func TestApp_CreateAgentTransfer_ContactNotFound(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	req := testutil.NewJSONRequest(t, map[string]any{
 		"contact_id":       uuid.New().String(), // Non-existent contact
 		"whatsapp_account": account.Name,
 	})
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 
 	err := app.CreateAgentTransfer(req)
 	require.NoError(t, err)
@@ -425,7 +519,7 @@ func TestApp_CreateAgentTransfer_ContactNotFound(t *testing.T) {
 func TestApp_CreateAgentTransfer_DuplicateTransfer(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	contact := createTestContact(t, app, org.ID)
@@ -437,7 +531,7 @@ func TestApp_CreateAgentTransfer_DuplicateTransfer(t *testing.T) {
 		"contact_id":       contact.ID.String(),
 		"whatsapp_account": account.Name,
 	})
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 
 	err := app.CreateAgentTransfer(req)
 	require.NoError(t, err)
@@ -451,13 +545,13 @@ func TestApp_CreateAgentTransfer_DuplicateTransfer(t *testing.T) {
 func TestApp_CreateAgentTransfer_MissingContactID(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	req := testutil.NewJSONRequest(t, map[string]any{
 		"whatsapp_account": account.Name,
 	})
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 
 	err := app.CreateAgentTransfer(req)
 	require.NoError(t, err)
@@ -471,7 +565,7 @@ func TestApp_CreateAgentTransfer_MissingContactID(t *testing.T) {
 func TestApp_CreateAgentTransfer_AgentUnavailable(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	contact := createTestContact(t, app, org.ID)
@@ -485,7 +579,7 @@ func TestApp_CreateAgentTransfer_AgentUnavailable(t *testing.T) {
 		"whatsapp_account": account.Name,
 		"agent_id":         agent.ID.String(),
 	})
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 
 	err := app.CreateAgentTransfer(req)
 	require.NoError(t, err)
@@ -501,14 +595,14 @@ func TestApp_CreateAgentTransfer_AgentUnavailable(t *testing.T) {
 func TestApp_ResumeFromTransfer_Success(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	contact := createTestContact(t, app, org.ID)
 	transfer := createTestTransfer(t, app, org.ID, contact.ID, account.Name, models.TransferStatusActive, nil)
 
 	req := testutil.NewJSONRequest(t, nil)
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 	testutil.SetPathParam(req, "id", transfer.ID.String())
 
 	err := app.ResumeFromTransfer(req)
@@ -537,10 +631,10 @@ func TestApp_ResumeFromTransfer_Success(t *testing.T) {
 func TestApp_ResumeFromTransfer_NotFound(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 
 	req := testutil.NewJSONRequest(t, nil)
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 	testutil.SetPathParam(req, "id", uuid.New().String())
 
 	err := app.ResumeFromTransfer(req)
@@ -555,14 +649,14 @@ func TestApp_ResumeFromTransfer_NotFound(t *testing.T) {
 func TestApp_ResumeFromTransfer_NotActive(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	contact := createTestContact(t, app, org.ID)
 	transfer := createTestTransfer(t, app, org.ID, contact.ID, account.Name, models.TransferStatusResumed, nil) // Already resumed
 
 	req := testutil.NewJSONRequest(t, nil)
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 	testutil.SetPathParam(req, "id", transfer.ID.String())
 
 	err := app.ResumeFromTransfer(req)
@@ -579,7 +673,7 @@ func TestApp_ResumeFromTransfer_NotActive(t *testing.T) {
 func TestApp_AssignAgentTransfer_Success(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	contact := createTestContact(t, app, org.ID)
@@ -589,7 +683,7 @@ func TestApp_AssignAgentTransfer_Success(t *testing.T) {
 	req := testutil.NewJSONRequest(t, map[string]any{
 		"agent_id": agent.ID.String(),
 	})
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 	testutil.SetPathParam(req, "id", transfer.ID.String())
 
 	err := app.AssignAgentTransfer(req)
@@ -626,7 +720,7 @@ func TestApp_AssignAgentTransfer_AgentSelfAssign(t *testing.T) {
 
 	// Agent self-assigns (no agent_id in body means assign to self)
 	req := testutil.NewJSONRequest(t, map[string]any{})
-	setTransferAuthContext(req, org.ID, agent.ID, models.RoleAgent)
+	setTransferAuthContext(req, org.ID, agent.ID)
 	testutil.SetPathParam(req, "id", transfer.ID.String())
 
 	err := app.AssignAgentTransfer(req)
@@ -653,7 +747,7 @@ func TestApp_AssignAgentTransfer_AgentCannotAssignToOthers(t *testing.T) {
 	req := testutil.NewJSONRequest(t, map[string]any{
 		"agent_id": otherAgent.ID.String(),
 	})
-	setTransferAuthContext(req, org.ID, agent.ID, models.RoleAgent)
+	setTransferAuthContext(req, org.ID, agent.ID)
 	testutil.SetPathParam(req, "id", transfer.ID.String())
 
 	err := app.AssignAgentTransfer(req)
@@ -662,13 +756,13 @@ func TestApp_AssignAgentTransfer_AgentCannotAssignToOthers(t *testing.T) {
 
 	var result map[string]any
 	require.NoError(t, json.Unmarshal(testutil.GetResponseBody(req), &result))
-	assert.Equal(t, "Agents cannot assign transfers to others", result["message"])
+	assert.Equal(t, "You don't have permission to assign transfers to others", result["message"])
 }
 
 func TestApp_AssignAgentTransfer_NotActive(t *testing.T) {
 	app := agentTransfersTestApp(t)
 	org := createTransferTestOrg(t, app)
-	user := createTransferTestUser(t, app, org.ID, models.RoleAdmin)
+	user := createTransferTestUser(t, app, org.ID, nil)
 	account := createTransferTestAccount(t, app, org.ID)
 
 	contact := createTestContact(t, app, org.ID)
@@ -678,7 +772,7 @@ func TestApp_AssignAgentTransfer_NotActive(t *testing.T) {
 	req := testutil.NewJSONRequest(t, map[string]any{
 		"agent_id": agent.ID.String(),
 	})
-	setTransferAuthContext(req, org.ID, user.ID, models.RoleAdmin)
+	setTransferAuthContext(req, org.ID, user.ID)
 	testutil.SetPathParam(req, "id", transfer.ID.String())
 
 	err := app.AssignAgentTransfer(req)
@@ -704,7 +798,7 @@ func TestApp_PickNextTransfer_Success(t *testing.T) {
 	transfer := createTestTransfer(t, app, org.ID, contact.ID, account.Name, models.TransferStatusActive, nil)
 
 	req := testutil.NewJSONRequest(t, nil)
-	setTransferAuthContext(req, org.ID, agent.ID, models.RoleAgent)
+	setTransferAuthContext(req, org.ID, agent.ID)
 
 	err := app.PickNextTransfer(req)
 	require.NoError(t, err)
@@ -739,7 +833,7 @@ func TestApp_PickNextTransfer_EmptyQueue(t *testing.T) {
 
 	// No transfers in queue
 	req := testutil.NewJSONRequest(t, nil)
-	setTransferAuthContext(req, org.ID, agent.ID, models.RoleAgent)
+	setTransferAuthContext(req, org.ID, agent.ID)
 
 	err := app.PickNextTransfer(req)
 	require.NoError(t, err)
@@ -791,7 +885,7 @@ func TestApp_PickNextTransfer_FIFO(t *testing.T) {
 	require.NoError(t, app.DB.Create(transfer2).Error)
 
 	req := testutil.NewJSONRequest(t, nil)
-	setTransferAuthContext(req, org.ID, agent.ID, models.RoleAgent)
+	setTransferAuthContext(req, org.ID, agent.ID)
 
 	err := app.PickNextTransfer(req)
 	require.NoError(t, err)
@@ -838,7 +932,7 @@ func TestApp_PickNextTransfer_TeamFiltering(t *testing.T) {
 
 	// Pick from team queue specifically
 	req := testutil.NewJSONRequest(t, nil)
-	setTransferAuthContext(req, org.ID, agent.ID, models.RoleAgent)
+	setTransferAuthContext(req, org.ID, agent.ID)
 	testutil.SetQueryParam(req, "team_id", team.ID.String())
 
 	err := app.PickNextTransfer(req)
@@ -867,8 +961,8 @@ func TestApp_AgentTransfers_CrossOrgIsolation(t *testing.T) {
 	org1 := createTransferTestOrg(t, app)
 	org2 := createTransferTestOrg(t, app)
 
-	user1 := createTransferTestUser(t, app, org1.ID, models.RoleAdmin)
-	user2 := createTransferTestUser(t, app, org2.ID, models.RoleAdmin)
+	user1 := createTransferTestUser(t, app, org1.ID, nil)
+	user2 := createTransferTestUser(t, app, org2.ID, nil)
 
 	account1 := createTransferTestAccount(t, app, org1.ID)
 	account2 := createTransferTestAccount(t, app, org2.ID)
@@ -882,7 +976,7 @@ func TestApp_AgentTransfers_CrossOrgIsolation(t *testing.T) {
 
 	// User1 should only see org1's transfers
 	req1 := testutil.NewGETRequest(t)
-	setTransferAuthContext(req1, org1.ID, user1.ID, models.RoleAdmin)
+	setTransferAuthContext(req1, org1.ID, user1.ID)
 
 	err := app.ListAgentTransfers(req1)
 	require.NoError(t, err)
@@ -900,7 +994,7 @@ func TestApp_AgentTransfers_CrossOrgIsolation(t *testing.T) {
 
 	// User2 should only see org2's transfers
 	req2 := testutil.NewGETRequest(t)
-	setTransferAuthContext(req2, org2.ID, user2.ID, models.RoleAdmin)
+	setTransferAuthContext(req2, org2.ID, user2.ID)
 
 	err = app.ListAgentTransfers(req2)
 	require.NoError(t, err)
@@ -918,7 +1012,7 @@ func TestApp_AgentTransfers_CrossOrgIsolation(t *testing.T) {
 
 	// User1 cannot resume org2's transfer
 	req3 := testutil.NewJSONRequest(t, nil)
-	setTransferAuthContext(req3, org1.ID, user1.ID, models.RoleAdmin)
+	setTransferAuthContext(req3, org1.ID, user1.ID)
 	testutil.SetPathParam(req3, "id", transfer2.ID.String())
 
 	err = app.ResumeFromTransfer(req3)

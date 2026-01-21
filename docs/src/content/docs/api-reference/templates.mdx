@@ -230,11 +230,60 @@ POST /api/templates/{id}/publish
 
 ## Template Variables
 
+### Positional Parameters
+
 Use `{{1}}`, `{{2}}`, etc. for dynamic content:
 
 ```
 Hello {{1}}, your order #{{2}} is ready for pickup at {{3}}.
 ```
+
+When creating templates with positional parameters, provide sample values:
+
+```json
+{
+  "components": [
+    {
+      "type": "BODY",
+      "text": "Hello {{1}}, your order #{{2}} is ready!"
+    }
+  ],
+  "sample_values": [
+    { "component": "body", "index": 1, "value": "John" },
+    { "component": "body", "index": 2, "value": "12345" }
+  ]
+}
+```
+
+### Named Parameters
+
+Templates also support named parameters for better readability:
+
+```
+Hello {{customer_name}}, your order #{{order_id}} is ready for pickup at {{store_location}}.
+```
+
+When using named parameters, provide sample values with `param_name`:
+
+```json
+{
+  "parameter_format": "named",
+  "components": [
+    {
+      "type": "BODY",
+      "text": "Hello {{customer_name}}, your order #{{order_id}} is ready!"
+    }
+  ],
+  "sample_values": [
+    { "component": "body", "param_name": "customer_name", "value": "John" },
+    { "component": "body", "param_name": "order_id", "value": "12345" }
+  ]
+}
+```
+
+<Aside type="note">
+  Whatomate automatically detects if your template uses named parameters (non-numeric placeholders) and sets the appropriate format when submitting to Meta.
+</Aside>
 
 <Aside type="caution">
   Template approval can take from a few minutes to 24 hours. Rejected templates must be modified and resubmitted.

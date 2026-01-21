@@ -37,15 +37,37 @@ View and manage template details:
 
 ## Template Variables
 
-Templates support dynamic variables using the `{{1}}`, `{{2}}` format. These are replaced with actual values when sending:
+Templates support dynamic variables that are replaced with actual values when sending messages.
+
+### Positional Parameters
+
+The traditional format uses numbered placeholders `{{1}}`, `{{2}}`, etc.:
 
 ```
 Hello {{1}}, your order #{{2}} has been shipped!
 ```
 
-When sending, you provide the values:
+When sending, you provide values in order:
 - `{{1}}` → Customer Name
 - `{{2}}` → Order ID
+
+### Named Parameters
+
+Templates also support named parameters for better readability and maintainability:
+
+```
+Hello {{customer_name}}, your order #{{order_id}} has been shipped!
+```
+
+Named parameters make templates easier to understand and less error-prone when dealing with multiple variables. When creating templates with named parameters:
+
+- Use descriptive names like `{{customer_name}}`, `{{order_id}}`, `{{delivery_date}}`
+- Parameter names can contain letters, numbers, and underscores
+- Whatomate automatically detects whether your template uses positional or named parameters
+
+<Aside type="tip">
+  Named parameters are recommended for templates with 3 or more variables, as they make the template easier to understand and maintain.
+</Aside>
 
 ## Template Categories
 

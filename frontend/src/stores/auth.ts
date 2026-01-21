@@ -8,15 +8,32 @@ export interface UserSettings {
   campaign_updates?: boolean
 }
 
+export interface Permission {
+  id: string
+  resource: string
+  action: string
+  description?: string
+}
+
+export interface UserRole {
+  id: string
+  name: string
+  description?: string
+  is_system: boolean
+  permissions?: Permission[]
+}
+
 export interface User {
   id: string
   email: string
   full_name: string
-  role: string
+  role_id?: string
+  role?: UserRole
   organization_id: string
   organization_name?: string
   settings?: UserSettings
   is_available?: boolean
+  is_super_admin?: boolean
 }
 
 export interface AuthState {
@@ -32,7 +49,7 @@ export const useAuthStore = defineStore('auth', () => {
   const breakStartedAt = ref<string | null>(null)
 
   const isAuthenticated = computed(() => !!token.value && !!user.value)
-  const userRole = computed(() => user.value?.role || 'agent')
+  const userRole = computed(() => user.value?.role?.name || 'agent')
   const organizationId = computed(() => user.value?.organization_id || '')
   const userSettings = computed(() => user.value?.settings || {})
   const isAvailable = computed(() => user.value?.is_available ?? true)
@@ -68,6 +85,8 @@ export const useAuthStore = defineStore('auth', () => {
         token.value = storedToken
         refreshToken.value = storedRefreshToken
         user.value = JSON.parse(storedUser)
+        // Fetch fresh user data in background to get updated permissions
+        refreshUserData()
         return true
       } catch {
         clearAuth()
@@ -75,6 +94,22 @@ export const useAuthStore = defineStore('auth', () => {
       }
     }
     return false
+  }
+
+  // Fetch fresh user data from API (including updated permissions)
+  async function refreshUserData(): Promise<boolean> {
+    if (!token.value) return false
+
+    try {
+      const response = await api.get('/me')
+      const freshUser = response.data.data
+      user.value = freshUser
+      localStorage.setItem('user', JSON.stringify(freshUser))
+      return true
+    } catch {
+      // If unauthorized, clear auth
+      return false
+    }
   }
 
   async function login(email: string, password: string): Promise<void> {
@@ -144,6 +179,36 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  // Check if user has a specific permission
+  function hasPermission(resource: string, action: string = 'read'): boolean {
+    // Super admins have all permissions
+    if (user.value?.is_super_admin) {
+      return true
+    }
+
+    const permissions = user.value?.role?.permissions
+    if (!permissions || permissions.length === 0) {
+      return false
+    }
+
+    return permissions.some(p => p.resource === resource && p.action === action)
+  }
+
+  // Check if user has any permission for a resource
+  function hasAnyPermission(resource: string): boolean {
+    // Super admins have all permissions
+    if (user.value?.is_super_admin) {
+      return true
+    }
+
+    const permissions = user.value?.role?.permissions
+    if (!permissions || permissions.length === 0) {
+      return false
+    }
+
+    return permissions.some(p => p.resource === resource)
+  }
+
   return {
     user,
     token,
@@ -158,10 +223,13 @@ export const useAuthStore = defineStore('auth', () => {
     clearAuth,
     restoreSession,
     restoreBreakTime,
+    refreshUserData,
     login,
     register,
     logout,
     refreshAccessToken,
-    setAvailability
+    setAvailability,
+    hasPermission,
+    hasAnyPermission
   }
 })

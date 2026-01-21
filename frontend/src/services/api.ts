@@ -12,12 +12,17 @@ export const api: AxiosInstance = axios.create({
   }
 })
 
-// Request interceptor to add auth token
+// Request interceptor to add auth token and organization header
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = localStorage.getItem('auth_token')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
+    }
+    // Add organization override header for super admins
+    const selectedOrgId = localStorage.getItem('selected_organization_id')
+    if (selectedOrgId) {
+      config.headers['X-Organization-ID'] = selectedOrgId
     }
     return config
   },
@@ -87,9 +92,9 @@ export const authService = {
 export const usersService = {
   list: () => api.get('/users'),
   get: (id: string) => api.get(`/users/${id}`),
-  create: (data: { email: string; password: string; full_name: string; role?: string }) =>
+  create: (data: { email: string; password: string; full_name: string; role_id?: string }) =>
     api.post('/users', data),
-  update: (id: string, data: { email?: string; password?: string; full_name?: string; role?: string; is_active?: boolean }) =>
+  update: (id: string, data: { email?: string; password?: string; full_name?: string; role_id?: string; is_active?: boolean }) =>
     api.put(`/users/${id}`, data),
   delete: (id: string) => api.delete(`/users/${id}`),
   me: () => api.get('/me'),
@@ -317,6 +322,19 @@ export const organizationService = {
   }) => api.put('/org/settings', data)
 }
 
+// Organizations (super admin only)
+export interface Organization {
+  id: string
+  name: string
+  slug?: string
+  created_at: string
+}
+
+export const organizationsService = {
+  list: () => api.get<{ organizations: Organization[] }>('/organizations'),
+  getCurrent: () => api.get<Organization>('/organizations/current')
+}
+
 export interface Webhook {
   id: string
   name: string
@@ -458,6 +476,41 @@ export const customActionsService = {
   delete: (id: string) => api.delete(`/custom-actions/${id}`),
   execute: (id: string, contactId: string) =>
     api.post<ActionResult>(`/custom-actions/${id}/execute`, { contact_id: contactId })
+}
+
+// Roles and Permissions
+export interface Permission {
+  id: string
+  resource: string
+  action: string
+  description: string
+  key: string // "resource:action"
+}
+
+export interface Role {
+  id: string
+  name: string
+  description: string
+  is_system: boolean
+  is_default: boolean
+  permissions: string[] // ["resource:action", ...]
+  user_count: number
+  created_at: string
+  updated_at: string
+}
+
+export const rolesService = {
+  list: () => api.get<{ roles: Role[] }>('/roles'),
+  get: (id: string) => api.get<Role>(`/roles/${id}`),
+  create: (data: { name: string; description?: string; is_default?: boolean; permissions: string[] }) =>
+    api.post<Role>('/roles', data),
+  update: (id: string, data: { name?: string; description?: string; is_default?: boolean; permissions?: string[] }) =>
+    api.put<Role>(`/roles/${id}`, data),
+  delete: (id: string) => api.delete(`/roles/${id}`)
+}
+
+export const permissionsService = {
+  list: () => api.get<{ permissions: Permission[] }>('/permissions')
 }
 
 export default api

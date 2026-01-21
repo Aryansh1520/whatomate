@@ -58,6 +58,8 @@ func GetMigrationModels() []MigrationModel {
 	return []MigrationModel{
 		// Core models
 		{"Organization", &models.Organization{}},
+		{"Permission", &models.Permission{}},
+		{"CustomRole", &models.CustomRole{}},
 		{"User", &models.User{}},
 		{"Team", &models.Team{}},
 		{"TeamMember", &models.TeamMember{}},
@@ -155,7 +157,20 @@ func RunMigrationWithProgress(db *gorm.DB) error {
 		currentStep++
 	}
 
-	// Create default admin
+	// Seed permissions (always run, will skip if already seeded)
+	printProgress(currentStep, totalSteps)
+	if err := SeedPermissionsAndRoles(silentDB); err != nil {
+		fmt.Printf("\n  \033[31m✗ Failed to seed permissions\033[0m\n\n")
+		return err
+	}
+
+	// Fix existing organizations - link permissions to system roles if missing
+	if err := SeedSystemRolesForAllOrgs(silentDB); err != nil {
+		fmt.Printf("\n  \033[31m✗ Failed to fix existing role permissions\033[0m\n\n")
+		return err
+	}
+
+	// Create default admin (only runs if no users exist)
 	printProgress(currentStep, totalSteps)
 	if err := CreateDefaultAdmin(silentDB); err != nil {
 		fmt.Printf("\n  \033[31m✗ Setup failed\033[0m\n\n")
@@ -206,6 +221,10 @@ func getIndexes() []string {
 		`CREATE INDEX IF NOT EXISTS idx_availability_logs_user_time ON user_availability_logs(user_id, started_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_availability_logs_org_time ON user_availability_logs(organization_id, started_at DESC)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_providers_org_provider ON sso_providers(organization_id, provider)`,
+		// Custom roles indexes
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_roles_org_name ON custom_roles(organization_id, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_custom_roles_org_system ON custom_roles(organization_id, is_system)`,
+		`CREATE INDEX IF NOT EXISTS idx_custom_roles_org_default ON custom_roles(organization_id, is_default) WHERE is_default = true`,
 	}
 }
 
@@ -269,6 +288,11 @@ func CreateIndexes(db *gorm.DB) error {
 
 		// SSO providers indexes
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_sso_providers_org_provider ON sso_providers(organization_id, provider)`,
+
+		// Custom roles indexes
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_roles_org_name ON custom_roles(organization_id, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_custom_roles_org_system ON custom_roles(organization_id, is_system)`,
+		`CREATE INDEX IF NOT EXISTS idx_custom_roles_org_default ON custom_roles(organization_id, is_default) WHERE is_default = true`,
 	}
 
 	for _, idx := range indexes {
@@ -310,20 +334,291 @@ func CreateDefaultAdmin(db *gorm.DB) error {
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 
-	// Create default admin user
+	// Seed permissions if not exist
+	if err := SeedPermissionsAndRoles(db); err != nil {
+		return fmt.Errorf("failed to seed permissions: %w", err)
+	}
+
+	// Seed system roles for this organization
+	if err := SeedSystemRolesForOrg(db, org.ID); err != nil {
+		return fmt.Errorf("failed to seed system roles: %w", err)
+	}
+
+	// Get admin system role for the organization
+	var adminRole models.CustomRole
+	if err := db.Where("organization_id = ? AND name = ? AND is_system = ?", org.ID, "admin", true).First(&adminRole).Error; err != nil {
+		return fmt.Errorf("failed to find admin role: %w", err)
+	}
+
+	// Create default admin user (super admin for cross-organization access)
 	admin := models.User{
 		BaseModel:      models.BaseModel{ID: uuid.New()},
 		OrganizationID: org.ID,
 		Email:          "admin@admin.com",
 		PasswordHash:   string(passwordHash),
 		FullName:       "Admin",
-		Role:           models.RoleAdmin,
+		RoleID:         &adminRole.ID,
 		IsActive:       true,
 		IsAvailable:    true,
+		IsSuperAdmin:   true,
 		Settings:       models.JSONB{},
 	}
 	if err := db.Create(&admin).Error; err != nil {
 		return fmt.Errorf("failed to create default admin user: %w", err)
+	}
+
+	return nil
+}
+
+// SeedPermissionsAndRoles seeds the default permissions and system roles
+func SeedPermissionsAndRoles(db *gorm.DB) error {
+	// Check if permissions already seeded
+	var permCount int64
+	if err := db.Model(&models.Permission{}).Count(&permCount).Error; err != nil {
+		return fmt.Errorf("failed to count permissions: %w", err)
+	}
+
+	// Seed permissions if not exist
+	if permCount == 0 {
+		permissions := models.DefaultPermissions()
+		for i := range permissions {
+			permissions[i].ID = uuid.New()
+		}
+		if err := db.Create(&permissions).Error; err != nil {
+			return fmt.Errorf("failed to seed permissions: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// SeedSystemRolesForAllOrgs creates system roles for all existing organizations
+// This is idempotent - it skips organizations that already have system roles
+func SeedSystemRolesForAllOrgs(db *gorm.DB) error {
+	var orgs []models.Organization
+	if err := db.Find(&orgs).Error; err != nil {
+		return fmt.Errorf("failed to fetch organizations: %w", err)
+	}
+
+	for _, org := range orgs {
+		if err := SeedSystemRolesForOrg(db, org.ID); err != nil {
+			return fmt.Errorf("failed to seed roles for org %s: %w", org.ID, err)
+		}
+	}
+
+	// Fix any system roles that don't have permissions linked
+	if err := FixSystemRolePermissions(db); err != nil {
+		return fmt.Errorf("failed to fix role permissions: %w", err)
+	}
+
+	// Migrate existing users from old role column to new role_id
+	if err := MigrateExistingUserRoles(db); err != nil {
+		return fmt.Errorf("failed to migrate user roles: %w", err)
+	}
+
+	// Make admin@admin.com a super admin if exists
+	if err := db.Exec("UPDATE users SET is_super_admin = true WHERE email = 'admin@admin.com'").Error; err != nil {
+		return fmt.Errorf("failed to set super admin: %w", err)
+	}
+
+	return nil
+}
+
+// FixSystemRolePermissions links permissions to existing system roles that have no permissions
+func FixSystemRolePermissions(db *gorm.DB) error {
+	// Get all permissions from database
+	var permissions []models.Permission
+	if err := db.Find(&permissions).Error; err != nil {
+		return fmt.Errorf("failed to fetch permissions: %w", err)
+	}
+
+	if len(permissions) == 0 {
+		return nil // No permissions to link
+	}
+
+	// Create permission map for lookup
+	permMap := make(map[string]models.Permission)
+	for _, p := range permissions {
+		permMap[p.Resource+":"+p.Action] = p
+	}
+
+	// Get system role permission mappings
+	rolePermissions := models.SystemRolePermissions()
+
+	// Find system roles without permissions
+	var systemRoles []models.CustomRole
+	if err := db.Where("is_system = ?", true).Find(&systemRoles).Error; err != nil {
+		return fmt.Errorf("failed to fetch system roles: %w", err)
+	}
+
+	for _, role := range systemRoles {
+		// Check if role has permissions
+		var permCount int64
+		db.Table("role_permissions").Where("custom_role_id = ?", role.ID).Count(&permCount)
+
+		if permCount > 0 {
+			continue // Already has permissions
+		}
+
+		// Get the permission keys for this role
+		permKeys, ok := rolePermissions[role.Name]
+		if !ok {
+			continue // Unknown role name
+		}
+
+		// Link permissions to role
+		var permsToAdd []models.Permission
+		for _, key := range permKeys {
+			if perm, ok := permMap[key]; ok {
+				permsToAdd = append(permsToAdd, perm)
+			}
+		}
+
+		if len(permsToAdd) > 0 {
+			if err := db.Model(&role).Association("Permissions").Replace(permsToAdd); err != nil {
+				return fmt.Errorf("failed to link permissions to role %s: %w", role.Name, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// MigrateExistingUserRoles migrates users from the old role column to the new role_id
+// This is safe to run on fresh installs - it will simply do nothing if the column doesn't exist
+func MigrateExistingUserRoles(db *gorm.DB) error {
+	// Check if the old 'role' column exists in the users table
+	var columnExists bool
+	err := db.Raw(`
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'users' AND column_name = 'role'
+		)
+	`).Scan(&columnExists).Error
+	if err != nil {
+		return fmt.Errorf("failed to check for role column: %w", err)
+	}
+
+	if !columnExists {
+		return nil // Fresh install, no old role column
+	}
+
+	// Get users who have old role but no role_id assigned
+	type UserWithLegacyRole struct {
+		ID             uuid.UUID
+		OrganizationID uuid.UUID
+		LegacyRole     string
+	}
+
+	var usersToMigrate []UserWithLegacyRole
+	err = db.Raw(`
+		SELECT id, organization_id, role as legacy_role
+		FROM users
+		WHERE role_id IS NULL AND role IS NOT NULL AND role != ''
+	`).Scan(&usersToMigrate).Error
+	if err != nil {
+		return fmt.Errorf("failed to fetch users with legacy roles: %w", err)
+	}
+
+	if len(usersToMigrate) == 0 {
+		return nil // No users to migrate
+	}
+
+	// Get all system roles grouped by organization
+	var systemRoles []models.CustomRole
+	if err := db.Where("is_system = ?", true).Find(&systemRoles).Error; err != nil {
+		return fmt.Errorf("failed to fetch system roles: %w", err)
+	}
+
+	// Create lookup: orgID -> roleName -> roleID
+	roleMap := make(map[uuid.UUID]map[string]uuid.UUID)
+	for _, role := range systemRoles {
+		if roleMap[role.OrganizationID] == nil {
+			roleMap[role.OrganizationID] = make(map[string]uuid.UUID)
+		}
+		roleMap[role.OrganizationID][role.Name] = role.ID
+	}
+
+	// Migrate each user
+	for _, user := range usersToMigrate {
+		orgRoles, ok := roleMap[user.OrganizationID]
+		if !ok {
+			continue // Organization doesn't have system roles yet
+		}
+
+		roleID, ok := orgRoles[user.LegacyRole]
+		if !ok {
+			continue // Role not found (shouldn't happen for admin/manager/agent)
+		}
+
+		// Update user's role_id
+		if err := db.Exec("UPDATE users SET role_id = ? WHERE id = ?", roleID, user.ID).Error; err != nil {
+			return fmt.Errorf("failed to update user %s role: %w", user.ID, err)
+		}
+	}
+
+	return nil
+}
+
+// SeedSystemRolesForOrg creates system roles for an organization
+func SeedSystemRolesForOrg(db *gorm.DB, orgID uuid.UUID) error {
+	// Check if system roles exist for this org
+	var roleCount int64
+	if err := db.Model(&models.CustomRole{}).Where("organization_id = ? AND is_system = ?", orgID, true).Count(&roleCount).Error; err != nil {
+		return fmt.Errorf("failed to count roles: %w", err)
+	}
+
+	if roleCount > 0 {
+		return nil // Already seeded
+	}
+
+	// Get all permissions from database
+	var permissions []models.Permission
+	if err := db.Find(&permissions).Error; err != nil {
+		return fmt.Errorf("failed to fetch permissions: %w", err)
+	}
+
+	// Create permission map for lookup
+	permMap := make(map[string]models.Permission)
+	for _, p := range permissions {
+		permMap[p.Resource+":"+p.Action] = p
+	}
+
+	// Get system role permission mappings
+	rolePermissions := models.SystemRolePermissions()
+
+	// Create system roles
+	systemRoles := []struct {
+		Name        string
+		Description string
+		IsDefault   bool
+	}{
+		{"admin", "Full system access", false},
+		{"manager", "Manage chatbot, campaigns, and team operations", false},
+		{"agent", "Handle customer conversations", true},
+	}
+
+	for _, sr := range systemRoles {
+		role := models.CustomRole{
+			BaseModel:      models.BaseModel{ID: uuid.New()},
+			OrganizationID: orgID,
+			Name:           sr.Name,
+			Description:    sr.Description,
+			IsSystem:       true,
+			IsDefault:      sr.IsDefault,
+		}
+
+		// Add permissions
+		permKeys := rolePermissions[sr.Name]
+		for _, key := range permKeys {
+			if perm, ok := permMap[key]; ok {
+				role.Permissions = append(role.Permissions, perm)
+			}
+		}
+
+		if err := db.Create(&role).Error; err != nil {
+			return fmt.Errorf("failed to create %s role: %w", sr.Name, err)
+		}
 	}
 
 	return nil

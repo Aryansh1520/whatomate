@@ -5,6 +5,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/shridarpatil/whatomate/internal/database"
+	"github.com/shridarpatil/whatomate/internal/middleware"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/valyala/fasthttp"
 	"github.com/zerodha/fastglue"
@@ -38,15 +40,6 @@ type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required"`
 }
 
-// JWTClaims represents JWT claims
-type JWTClaims struct {
-	UserID         uuid.UUID   `json:"user_id"`
-	OrganizationID uuid.UUID   `json:"organization_id"`
-	Email          string      `json:"email"`
-	Role           models.Role `json:"role"`
-	jwt.RegisteredClaims
-}
-
 // Login authenticates a user and returns tokens
 func (a *App) Login(r *fastglue.Request) error {
 	var req LoginRequest
@@ -59,15 +52,30 @@ func (a *App) Login(r *fastglue.Request) error {
 		)
 	}
 
-	// Find user by email
+	// Find user by email with role preloaded
 	var user models.User
-	if err := a.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
-		return r.SendErrorEnvelope(
-			fasthttp.StatusUnauthorized,
-			"Invalid credentials",
-			nil,
-			"",
-		)
+	if err := a.DB.Preload("Role").Where("email = ?", req.Email).First(&user).Error; err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid credentials", nil, "")
+	}
+
+	// Load permissions from cache
+	if user.Role != nil && user.RoleID != nil {
+		cachedPerms, err := a.GetRolePermissionsCached(*user.RoleID)
+		if err == nil {
+			permissions := make([]models.Permission, 0, len(cachedPerms))
+			for _, p := range cachedPerms {
+				for i := len(p) - 1; i >= 0; i-- {
+					if p[i] == ':' {
+						permissions = append(permissions, models.Permission{
+							Resource: p[:i],
+							Action:   p[i+1:],
+						})
+						break
+					}
+				}
+			}
+			user.Role.Permissions = permissions
+		}
 	}
 
 	// Check if user is active
@@ -134,15 +142,9 @@ func (a *App) Login(r *fastglue.Request) error {
 	refreshToken, err := a.generateRefreshToken(&user)
 	if err != nil {
 		a.Log.Error("Failed to generate refresh token", "error", err)
-		return r.SendErrorEnvelope(
-			fasthttp.StatusInternalServerError,
-			"Failed to generate token",
-			nil,
-			"",
-		)
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to generate token", nil, "")
 	}
 
-	// Successful login response
 	return r.SendEnvelope(AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -150,6 +152,7 @@ func (a *App) Login(r *fastglue.Request) error {
 		User:         user,
 	})
 }
+
 
 // RefreshToken refreshes access token using refresh token
 func (a *App) RefreshToken(r *fastglue.Request) error {
@@ -159,7 +162,7 @@ func (a *App) RefreshToken(r *fastglue.Request) error {
 	}
 
 	// Parse and validate refresh token
-	token, err := jwt.ParseWithClaims(req.RefreshToken, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(req.RefreshToken, &middleware.JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
 		return []byte(a.Config.JWT.Secret), nil
 	})
 
@@ -167,7 +170,7 @@ func (a *App) RefreshToken(r *fastglue.Request) error {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid refresh token", nil, "")
 	}
 
-	claims, ok := token.Claims.(*JWTClaims)
+	claims, ok := token.Claims.(*middleware.JWTClaims)
 	if !ok {
 		return r.SendErrorEnvelope(fasthttp.StatusUnauthorized, "Invalid token claims", nil, "")
 	}
@@ -195,11 +198,12 @@ func (a *App) RefreshToken(r *fastglue.Request) error {
 }
 
 func (a *App) generateAccessToken(user *models.User) (string, error) {
-	claims := JWTClaims{
+	claims := middleware.JWTClaims{
 		UserID:         user.ID,
 		OrganizationID: user.OrganizationID,
 		Email:          user.Email,
-		Role:           user.Role,
+		RoleID:         user.RoleID,
+		IsSuperAdmin:   user.IsSuperAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(a.Config.JWT.AccessExpiryMins) * time.Minute)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -212,11 +216,12 @@ func (a *App) generateAccessToken(user *models.User) (string, error) {
 }
 
 func (a *App) generateRefreshToken(user *models.User) (string, error) {
-	claims := JWTClaims{
+	claims := middleware.JWTClaims{
 		UserID:         user.ID,
 		OrganizationID: user.OrganizationID,
 		Email:          user.Email,
-		Role:           user.Role,
+		RoleID:         user.RoleID,
+		IsSuperAdmin:   user.IsSuperAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(a.Config.JWT.RefreshExpiryDays) * 24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

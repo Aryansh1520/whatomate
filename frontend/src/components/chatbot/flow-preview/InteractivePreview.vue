@@ -44,7 +44,9 @@ watch(
   async () => {
     await nextTick()
     if (chatScrollRef.value?.$el) {
-      const scrollArea = chatScrollRef.value.$el.querySelector('[data-radix-scroll-area-viewport]')
+      const scrollArea = chatScrollRef.value.$el.querySelector('[data-reka-scroll-area-viewport]') ||
+                         chatScrollRef.value.$el.querySelector('[data-radix-scroll-area-viewport]') ||
+                         chatScrollRef.value.$el.querySelector('[style*="overflow"]')
       if (scrollArea) {
         scrollArea.scrollTop = scrollArea.scrollHeight
       }

@@ -264,7 +264,13 @@ func (a *App) createOutgoingMessage(req OutgoingMessageRequest, opts MessageSend
 
 	case models.MessageTypeTemplate:
 		if req.Template != nil {
-			msg.Content = fmt.Sprintf("[Template: %s]", req.Template.DisplayName)
+			// Store actual rendered content instead of just template name
+			content := replaceTemplateParams(req.Template.BodyContent, req.BodyParams)
+			if content == "" {
+				content = fmt.Sprintf("[Template: %s]", req.Template.DisplayName)
+			}
+			msg.Content = content
+			msg.TemplateName = req.Template.Name
 			msg.Metadata = models.JSONB{
 				"template_name": req.Template.Name,
 				"template_id":   req.Template.ID.String(),
@@ -534,7 +540,24 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 		contact = &c
 		phoneNumber = c.PhoneNumber
 	} else {
+		// Find or create contact from phone number
 		phoneNumber = req.PhoneNumber
+		var c models.Contact
+		err := a.DB.Where("phone_number = ? AND organization_id = ?", phoneNumber, orgID).First(&c).Error
+		if err != nil {
+			// Contact not found, create new one
+			c = models.Contact{
+				BaseModel:      models.BaseModel{ID: uuid.New()},
+				OrganizationID: orgID,
+				PhoneNumber:    phoneNumber,
+			}
+			if err := a.DB.Create(&c).Error; err != nil {
+				a.Log.Error("Failed to create contact", "error", err, "phone", phoneNumber)
+				return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create contact", nil, "")
+			}
+			a.Log.Info("Contact created from API", "contact_id", c.ID, "phone", phoneNumber)
+		}
+		contact = &c
 	}
 
 	// Get WhatsApp account
@@ -561,85 +584,41 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 	}
 
 	// Extract parameter names and resolve values
-	paramNames := extractParamNamesFromContent(template.BodyContent)
-	bodyParams := resolveParams(paramNames, req.TemplateParams)
+	paramNames := ExtractParamNamesFromContent(template.BodyContent)
+	bodyParams := ResolveParams(paramNames, req.TemplateParams)
 
-	// Use unified message sender when we have a contact
-	if contact != nil {
-		msgReq := OutgoingMessageRequest{
-			Account:    &account,
-			Contact:    contact,
-			Type:       models.MessageTypeTemplate,
-			Template:   &template,
-			BodyParams: bodyParams,
+	// Validate that all required parameters are provided
+	if len(paramNames) > 0 {
+		var missingParams []string
+		for i, name := range paramNames {
+			if i >= len(bodyParams) || bodyParams[i] == "" {
+				missingParams = append(missingParams, name)
+			}
 		}
-
-		opts := APISendOptions()
-		opts.SentByUserID = &userID
-
-		ctx := context.Background()
-		message, err := a.SendOutgoingMessage(ctx, msgReq, opts)
-		if err != nil {
-			return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to send template message", nil, "")
+		if len(missingParams) > 0 {
+			return r.SendErrorEnvelope(fasthttp.StatusBadRequest,
+				fmt.Sprintf("Missing template parameters: %s. Expected parameters: %v", strings.Join(missingParams, ", "), paramNames),
+				nil, "")
 		}
-
-		return r.SendEnvelope(map[string]any{
-			"message_id":    message.ID,
-			"status":        "pending",
-			"template_name": template.Name,
-			"phone_number":  phoneNumber,
-		})
 	}
 
-	// Phone-only send (no contact) - create message without contact association
-	message := models.Message{
-		BaseModel:       models.BaseModel{ID: uuid.New()},
-		OrganizationID:  orgID,
-		WhatsAppAccount: account.Name,
-		Direction:       models.DirectionOutgoing,
-		MessageType:     "template",
-		Content:         fmt.Sprintf("[Template: %s]", template.DisplayName),
-		Status:          models.MessageStatusPending,
-		SentByUserID:    &userID,
-		Metadata: models.JSONB{
-			"template_name":   template.Name,
-			"template_id":     template.ID.String(),
-			"template_params": req.TemplateParams,
-			"phone_number":    phoneNumber,
-		},
+	// Send using unified message sender
+	msgReq := OutgoingMessageRequest{
+		Account:    &account,
+		Contact:    contact,
+		Type:       models.MessageTypeTemplate,
+		Template:   &template,
+		BodyParams: bodyParams,
 	}
 
-	if err := a.DB.Create(&message).Error; err != nil {
-		a.Log.Error("Failed to create message", "error", err)
-		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to create message", nil, "")
+	opts := DefaultSendOptions()
+	opts.SentByUserID = &userID
+
+	ctx := context.Background()
+	message, err := a.SendOutgoingMessage(ctx, msgReq, opts)
+	if err != nil {
+		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, "Failed to send template message", nil, "")
 	}
-
-	// Send via WhatsApp API asynchronously
-	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		waAccount := a.toWhatsAppAccount(&account)
-		waMessageID, err := a.WhatsApp.SendTemplateMessage(ctx, waAccount, phoneNumber, template.Name, template.Language, bodyParams)
-
-		if err != nil {
-			a.Log.Error("Failed to send template message", "error", err, "template", template.Name, "phone", phoneNumber)
-			a.DB.Model(&message).Updates(map[string]any{
-				"status":        models.MessageStatusFailed,
-				"error_message": err.Error(),
-			})
-			return
-		}
-
-		a.DB.Model(&message).Updates(map[string]any{
-			"status":               models.MessageStatusSent,
-			"whats_app_message_id": waMessageID,
-		})
-
-		a.Log.Info("Template message sent", "message_id", message.ID, "wa_message_id", waMessageID, "template", template.Name)
-	}()
 
 	return r.SendEnvelope(map[string]any{
 		"message_id":    message.ID,
@@ -649,11 +628,11 @@ func (a *App) SendTemplateMessage(r *fastglue.Request) error {
 	})
 }
 
-// extractParamNamesFromContent extracts parameter names from template content
+// ExtractParamNamesFromContent extracts parameter names from template content
 // Supports both positional ({{1}}, {{2}}) and named ({{name}}, {{order_id}}) parameters
 var templateParamPattern = regexp.MustCompile(`\{\{([^}]+)\}\}`)
 
-func extractParamNamesFromContent(content string) []string {
+func ExtractParamNamesFromContent(content string) []string {
 	matches := templateParamPattern.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
 		return nil
@@ -673,8 +652,27 @@ func extractParamNamesFromContent(content string) []string {
 	return names
 }
 
-// resolveParams resolves both positional and named parameters to ordered values
-func resolveParams(paramNames []string, params map[string]string) []string {
+// replaceTemplateParams replaces {{1}}, {{2}}, etc. placeholders with actual values
+func replaceTemplateParams(content string, params []string) string {
+	if content == "" || len(params) == 0 {
+		return content
+	}
+
+	result := content
+	// Extract param names from content to replace both named and positional
+	paramNames := ExtractParamNamesFromContent(content)
+	for i, name := range paramNames {
+		if i < len(params) {
+			// Replace both named ({{name}}) and positional ({{1}}) placeholders
+			result = strings.ReplaceAll(result, fmt.Sprintf("{{%s}}", name), params[i])
+			result = strings.ReplaceAll(result, fmt.Sprintf("{{%d}}", i+1), params[i])
+		}
+	}
+	return result
+}
+
+// ResolveParams resolves both positional and named parameters to ordered values
+func ResolveParams(paramNames []string, params map[string]string) []string {
 	if len(paramNames) == 0 || len(params) == 0 {
 		return nil
 	}

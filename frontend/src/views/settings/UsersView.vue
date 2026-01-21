@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -54,6 +55,8 @@ import {
 } from '@/components/ui/breadcrumb'
 import { useUsersStore, type User } from '@/stores/users'
 import { useAuthStore } from '@/stores/auth'
+import { useRolesStore } from '@/stores/roles'
+import { useOrganizationsStore } from '@/stores/organizations'
 import { toast } from 'vue-sonner'
 import {
   Plus,
@@ -75,6 +78,8 @@ import {
 
 const usersStore = useUsersStore()
 const authStore = useAuthStore()
+const rolesStore = useRolesStore()
+const organizationsStore = useOrganizationsStore()
 
 const isLoading = ref(true)
 const isDialogOpen = ref(false)
@@ -92,11 +97,19 @@ const formData = ref({
   email: '',
   password: '',
   full_name: '',
-  role: 'agent' as 'admin' | 'manager' | 'agent',
-  is_active: true
+  role_id: '',
+  is_active: true,
+  is_super_admin: false
 })
 
+// Get the default role ID (agent role)
+const getDefaultRoleId = () => {
+  const agentRole = rolesStore.roles.find(r => r.name === 'agent' && r.is_system)
+  return agentRole?.id || ''
+}
+
 const currentUserId = computed(() => authStore.user?.id)
+const isSuperAdmin = computed(() => authStore.user?.is_super_admin || false)
 
 // Filtered and paginated users
 const filteredUsers = computed(() => {
@@ -107,7 +120,7 @@ const filteredUsers = computed(() => {
   return usersStore.users.filter(user =>
     user.full_name.toLowerCase().includes(query) ||
     user.email.toLowerCase().includes(query) ||
-    user.role.toLowerCase().includes(query)
+    (user.role?.name || '').toLowerCase().includes(query)
   )
 })
 
@@ -130,16 +143,24 @@ watch(searchQuery, () => {
   currentPage.value = 1
 })
 
-onMounted(async () => {
-  await fetchUsers()
+// Refetch data when organization changes
+watch(() => organizationsStore.selectedOrgId, () => {
+  fetchData()
 })
 
-async function fetchUsers() {
+onMounted(async () => {
+  await fetchData()
+})
+
+async function fetchData() {
   isLoading.value = true
   try {
-    await usersStore.fetchUsers()
+    await Promise.all([
+      usersStore.fetchUsers(),
+      rolesStore.fetchRoles()
+    ])
   } catch (error: any) {
-    toast.error('Failed to load users')
+    toast.error('Failed to load data')
   } finally {
     isLoading.value = false
   }
@@ -151,8 +172,9 @@ function openCreateDialog() {
     email: '',
     password: '',
     full_name: '',
-    role: 'agent',
-    is_active: true
+    role_id: getDefaultRoleId(),
+    is_active: true,
+    is_super_admin: false
   }
   isDialogOpen.value = true
 }
@@ -163,8 +185,9 @@ function openEditDialog(user: User) {
     email: user.email,
     password: '',
     full_name: user.full_name,
-    role: user.role,
-    is_active: user.is_active
+    role_id: user.role_id || '',
+    is_active: user.is_active,
+    is_super_admin: user.is_super_admin || false
   }
   isDialogOpen.value = true
 }
@@ -180,27 +203,41 @@ async function saveUser() {
     return
   }
 
+  if (!formData.value.role_id) {
+    toast.error('Please select a role')
+    return
+  }
+
   isSubmitting.value = true
   try {
     if (editingUser.value) {
       const updateData: any = {
         email: formData.value.email,
         full_name: formData.value.full_name,
-        role: formData.value.role,
+        role_id: formData.value.role_id,
         is_active: formData.value.is_active
       }
       if (formData.value.password) {
         updateData.password = formData.value.password
       }
+      // Only include is_super_admin if current user is a super admin
+      if (isSuperAdmin.value) {
+        updateData.is_super_admin = formData.value.is_super_admin
+      }
       await usersStore.updateUser(editingUser.value.id, updateData)
       toast.success('User updated successfully')
     } else {
-      await usersStore.createUser({
+      const createData: any = {
         email: formData.value.email,
         password: formData.value.password,
         full_name: formData.value.full_name,
-        role: formData.value.role
-      })
+        role_id: formData.value.role_id
+      }
+      // Only include is_super_admin if current user is a super admin
+      if (isSuperAdmin.value && formData.value.is_super_admin) {
+        createData.is_super_admin = true
+      }
+      await usersStore.createUser(createData)
       toast.success('User created successfully')
     }
     isDialogOpen.value = false
@@ -231,8 +268,8 @@ async function confirmDelete() {
   }
 }
 
-function getRoleBadgeVariant(role: string): 'default' | 'secondary' | 'outline' {
-  switch (role) {
+function getRoleBadgeVariant(roleName: string): 'default' | 'secondary' | 'outline' {
+  switch (roleName.toLowerCase()) {
     case 'admin':
       return 'default'
     case 'manager':
@@ -242,8 +279,8 @@ function getRoleBadgeVariant(role: string): 'default' | 'secondary' | 'outline' 
   }
 }
 
-function getRoleIcon(role: string) {
-  switch (role) {
+function getRoleIcon(roleName: string) {
+  switch (roleName.toLowerCase()) {
     case 'admin':
       return ShieldCheck
     case 'manager':
@@ -251,6 +288,10 @@ function getRoleIcon(role: string) {
     default:
       return UserCog
   }
+}
+
+function getRoleName(user: User): string {
+  return user.role?.name || 'No role'
 }
 
 function formatDate(dateString: string) {
@@ -269,18 +310,20 @@ function goToPage(page: number) {
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
     <!-- Header -->
-    <header class="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header class="border-b border-white/[0.08] light:border-gray-200 bg-[#0a0a0b]/95 light:bg-white/95 backdrop-blur">
       <div class="flex h-16 items-center px-6">
         <RouterLink to="/settings">
           <Button variant="ghost" size="icon" class="mr-3">
             <ArrowLeft class="h-5 w-5" />
           </Button>
         </RouterLink>
-        <Users class="h-5 w-5 mr-3" />
+        <div class="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center mr-3 shadow-lg shadow-blue-500/20">
+          <Users class="h-4 w-4 text-white" />
+        </div>
         <div class="flex-1">
-          <h1 class="text-xl font-semibold">User Management</h1>
+          <h1 class="text-xl font-semibold text-white light:text-gray-900">User Management</h1>
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem>
@@ -300,57 +343,34 @@ function goToPage(page: number) {
       </div>
     </header>
 
-    <!-- Content -->
-    <div class="flex-1 p-6 overflow-auto">
-      <div class="max-w-6xl mx-auto space-y-4">
-         <!-- Role Info -->
-        <Card>
-          <CardContent class="p-6">
-            <h3 class="font-semibold mb-4">Role Permissions</h3>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-              <div class="flex items-start gap-3">
-                <ShieldCheck class="h-5 w-5 text-primary mt-0.5" />
-                <div>
-                  <span class="font-medium">Admin</span>
-                  <p class="text-muted-foreground">Full access including user management</p>
-                </div>
-              </div>
-              <div class="flex items-start gap-3">
-                <Shield class="h-5 w-5 text-muted-foreground mt-0.5" />
-                <div>
-                  <span class="font-medium">Manager</span>
-                  <p class="text-muted-foreground">All features except user management</p>
-                </div>
-              </div>
-              <div class="flex items-start gap-3">
-                <UserCog class="h-5 w-5 text-muted-foreground mt-0.5" />
-                <div>
-                  <span class="font-medium">Agent</span>
-                  <p class="text-muted-foreground">Chat with assigned contacts only</p>
-                </div>
-              </div>
+    <ScrollArea class="flex-1">
+      <div class="p-6">
+        <div class="max-w-6xl mx-auto space-y-4">
+          <!-- Search and filters -->
+          <div class="flex items-center gap-4">
+            <div class="relative flex-1 max-w-sm">
+              <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                v-model="searchQuery"
+                placeholder="Search by name, email, or role..."
+                class="pl-9"
+              />
             </div>
-          </CardContent>
-        </Card>
-        <!-- Search and filters -->
-        <div class="flex items-center gap-4">
-          <div class="relative flex-1 max-w-sm">
-            <Search class="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              v-model="searchQuery"
-              placeholder="Search by name, email, or role..."
-              class="pl-9"
-            />
+            <div class="text-sm text-muted-foreground">
+              {{ filteredUsers.length }} user{{ filteredUsers.length !== 1 ? 's' : '' }}
+            </div>
           </div>
-          <div class="text-sm text-muted-foreground">
-            {{ filteredUsers.length }} user{{ filteredUsers.length !== 1 ? 's' : '' }}
-          </div>
-        </div>
 
-        <!-- Users Table -->
-        <Card>
-          <CardContent class="p-0">
-            <Table>
+          <!-- Users Table -->
+          <Card>
+            <CardHeader>
+              <CardTitle>Your Users</CardTitle>
+              <CardDescription>
+                Manage team members and their roles. <RouterLink to="/settings/roles" class="text-primary hover:underline">Manage roles</RouterLink>
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead class="w-[300px]">User</TableHead>
@@ -376,20 +396,21 @@ function goToPage(page: number) {
                   <TableCell>
                     <div class="flex items-center gap-3">
                       <div class="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                        <component :is="getRoleIcon(user.role)" class="h-4 w-4 text-primary" />
+                        <component :is="getRoleIcon(getRoleName(user))" class="h-4 w-4 text-primary" />
                       </div>
                       <div class="min-w-0">
                         <div class="flex items-center gap-2">
                           <p class="font-medium truncate">{{ user.full_name }}</p>
                           <Badge v-if="user.id === currentUserId" variant="outline" class="text-xs">You</Badge>
+                          <Badge v-if="user.is_super_admin" variant="default" class="text-xs">Super Admin</Badge>
                         </div>
                         <p class="text-sm text-muted-foreground truncate">{{ user.email }}</p>
                       </div>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge :variant="getRoleBadgeVariant(user.role)" class="capitalize">
-                      {{ user.role }}
+                    <Badge :variant="getRoleBadgeVariant(getRoleName(user))" class="capitalize">
+                      {{ getRoleName(user) }}
                     </Badge>
                   </TableCell>
                   <TableCell>
@@ -434,74 +455,75 @@ function goToPage(page: number) {
                 </TableRow>
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <!-- Pagination -->
-        <div v-if="totalPages > 1" class="flex items-center justify-between">
-          <p class="text-sm text-muted-foreground">
-            Showing {{ paginationInfo.start }} to {{ paginationInfo.end }} of {{ paginationInfo.total }} users
-          </p>
-          <div class="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon"
-              class="h-8 w-8"
-              :disabled="currentPage === 1"
-              @click="goToPage(1)"
-            >
-              <ChevronsLeft class="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              class="h-8 w-8"
-              :disabled="currentPage === 1"
-              @click="goToPage(currentPage - 1)"
-            >
-              <ChevronLeft class="h-4 w-4" />
-            </Button>
-            <div class="flex items-center gap-1 mx-2">
-              <template v-for="page in totalPages" :key="page">
-                <Button
-                  v-if="page === 1 || page === totalPages || (page >= currentPage - 1 && page <= currentPage + 1)"
-                  :variant="page === currentPage ? 'default' : 'outline'"
-                  size="icon"
-                  class="h-8 w-8"
-                  @click="goToPage(page)"
-                >
-                  {{ page }}
-                </Button>
-                <span
-                  v-else-if="page === currentPage - 2 || page === currentPage + 2"
-                  class="px-1 text-muted-foreground"
-                >
-                  ...
-                </span>
-              </template>
+          <!-- Pagination -->
+          <div v-if="totalPages > 1" class="flex items-center justify-between">
+            <p class="text-sm text-muted-foreground">
+              Showing {{ paginationInfo.start }} to {{ paginationInfo.end }} of {{ paginationInfo.total }} users
+            </p>
+            <div class="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="icon"
+                class="h-8 w-8"
+                :disabled="currentPage === 1"
+                @click="goToPage(1)"
+              >
+                <ChevronsLeft class="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                class="h-8 w-8"
+                :disabled="currentPage === 1"
+                @click="goToPage(currentPage - 1)"
+              >
+                <ChevronLeft class="h-4 w-4" />
+              </Button>
+              <div class="flex items-center gap-1 mx-2">
+                <template v-for="page in totalPages" :key="page">
+                  <Button
+                    v-if="page === 1 || page === totalPages || (page >= currentPage - 1 && page <= currentPage + 1)"
+                    :variant="page === currentPage ? 'default' : 'outline'"
+                    size="icon"
+                    class="h-8 w-8"
+                    @click="goToPage(page)"
+                  >
+                    {{ page }}
+                  </Button>
+                  <span
+                    v-else-if="page === currentPage - 2 || page === currentPage + 2"
+                    class="px-1 text-muted-foreground"
+                  >
+                    ...
+                  </span>
+                </template>
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                class="h-8 w-8"
+                :disabled="currentPage === totalPages"
+                @click="goToPage(currentPage + 1)"
+              >
+                <ChevronRight class="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                class="h-8 w-8"
+                :disabled="currentPage === totalPages"
+                @click="goToPage(totalPages)"
+              >
+                <ChevronsRight class="h-4 w-4" />
+              </Button>
             </div>
-            <Button
-              variant="outline"
-              size="icon"
-              class="h-8 w-8"
-              :disabled="currentPage === totalPages"
-              @click="goToPage(currentPage + 1)"
-            >
-              <ChevronRight class="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              class="h-8 w-8"
-              :disabled="currentPage === totalPages"
-              @click="goToPage(totalPages)"
-            >
-              <ChevronsRight class="h-4 w-4" />
-            </Button>
           </div>
         </div>
       </div>
-    </div>
+    </ScrollArea>
 
     <!-- Add/Edit Dialog -->
     <Dialog v-model:open="isDialogOpen">
@@ -548,17 +570,29 @@ function goToPage(page: number) {
           </div>
 
           <div class="space-y-2">
-            <Label for="role">Role</Label>
-            <Select v-model="formData.role">
+            <Label for="role">Role <span class="text-destructive">*</span></Label>
+            <Select v-model="formData.role_id">
               <SelectTrigger>
                 <SelectValue placeholder="Select role" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="admin">Admin</SelectItem>
-                <SelectItem value="manager">Manager</SelectItem>
-                <SelectItem value="agent">Agent</SelectItem>
+                <SelectItem
+                  v-for="role in rolesStore.roles"
+                  :key="role.id"
+                  :value="role.id"
+                >
+                  <div class="flex items-center gap-2">
+                    <span class="capitalize">{{ role.name }}</span>
+                    <Badge v-if="role.is_system" variant="secondary" class="text-xs">System</Badge>
+                  </div>
+                </SelectItem>
               </SelectContent>
             </Select>
+            <p class="text-xs text-muted-foreground">
+              <RouterLink to="/settings/roles" class="text-primary hover:underline">
+                Manage roles and permissions
+              </RouterLink>
+            </p>
           </div>
 
           <div v-if="editingUser" class="flex items-center justify-between">
@@ -570,6 +604,24 @@ function goToPage(page: number) {
               :checked="formData.is_active"
               @update:checked="formData.is_active = $event"
               :disabled="editingUser?.id === currentUserId"
+            />
+          </div>
+
+          <!-- Super Admin toggle - only visible to super admins -->
+          <div v-if="isSuperAdmin" class="flex items-center justify-between border-t pt-4">
+            <div>
+              <Label for="is_super_admin" class="font-normal cursor-pointer">
+                Super Admin
+              </Label>
+              <p class="text-xs text-muted-foreground">
+                Super admins can access all organizations and manage other super admins
+              </p>
+            </div>
+            <Switch
+              id="is_super_admin"
+              :checked="formData.is_super_admin"
+              @update:checked="formData.is_super_admin = $event"
+              :disabled="editingUser?.id === currentUserId && editingUser?.is_super_admin"
             />
           </div>
         </div>

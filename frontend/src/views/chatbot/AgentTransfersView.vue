@@ -70,7 +70,7 @@ const agents = ref<{ id: string; full_name: string }[]>([])
 const teams = ref<Team[]>([])
 const selectedTeamFilter = ref<string>('all')
 
-const userRole = computed(() => authStore.user?.role)
+const userRole = computed(() => authStore.user?.role?.name)
 const isAdminOrManager = computed(() => userRole.value === 'admin' || userRole.value === 'manager')
 const currentUserId = computed(() => authStore.user?.id)
 
@@ -126,26 +126,14 @@ watch(activeTab, async (newTab) => {
 })
 
 onMounted(async () => {
-  console.log('AgentTransfersView mounted, user role:', userRole.value, 'isAdminOrManager:', isAdminOrManager.value)
   await Promise.all([fetchTransfers(), fetchTeams()])
   // Always try to fetch agents for admin/manager - the API will reject if unauthorized
   if (isAdminOrManager.value) {
     await fetchAgents()
-  } else {
-    console.log('Not admin or manager, skipping fetchAgents')
   }
   // No polling - WebSocket handles real-time updates
   // Reconnection refresh handles sync after disconnect
 })
-
-// Watch for changes in the store's transfers array
-watch(
-  () => transfersStore.transfers,
-  (newTransfers) => {
-    console.log('Transfers updated:', newTransfers.length, 'Queue:', queueTransfers.value.length)
-  },
-  { deep: true }
-)
 
 async function fetchTransfers() {
   isLoading.value = true
@@ -159,18 +147,13 @@ async function fetchTransfers() {
 async function fetchAgents() {
   try {
     const response = await usersService.list()
-    console.log('Users API response:', response.data)
     const data = response.data.data || response.data
-    console.log('Parsed data:', data)
     const usersList = data.users || data || []
-    console.log('Users list:', usersList)
     agents.value = usersList.filter((u: any) => u.is_active !== false).map((u: any) => ({
       id: u.id,
       full_name: u.full_name
     }))
-    console.log('Agents after mapping:', agents.value)
-  } catch (error: any) {
-    console.error('Failed to fetch agents:', error)
+  } catch {
     toast.error('Failed to load agents list')
   }
 }
@@ -180,8 +163,7 @@ async function fetchTeams() {
     const response = await teamsService.list()
     const data = response.data.data || response.data
     teams.value = (data.teams || []).filter((t: Team) => t.is_active)
-  } catch (error) {
-    console.error('Failed to load teams:', error)
+  } catch {
     teams.value = []
   }
 }
@@ -325,19 +307,21 @@ function formatTimeRemaining(deadline: string | undefined): string {
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
+  <div class="flex flex-col h-full bg-[#0a0a0b] light:bg-gray-50">
     <!-- Header -->
-    <header class="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header class="border-b border-white/[0.08] light:border-gray-200 bg-[#0a0a0b]/95 light:bg-white/95 backdrop-blur">
       <div class="flex h-16 items-center px-6">
-        <UserX class="h-5 w-5 mr-3" />
+        <div class="h-8 w-8 rounded-lg bg-gradient-to-br from-red-500 to-orange-600 flex items-center justify-center mr-3 shadow-lg shadow-red-500/20">
+          <UserX class="h-4 w-4 text-white" />
+        </div>
         <div class="flex-1">
-          <h1 class="text-xl font-semibold">Transfers</h1>
-          <p class="text-sm text-muted-foreground">Manage agent transfers and queue</p>
+          <h1 class="text-xl font-semibold text-white light:text-gray-900">Transfers</h1>
+          <p class="text-sm text-white/50 light:text-gray-500">Manage agent transfers and queue</p>
         </div>
 
         <!-- Queue pickup for agents -->
         <div v-if="!isAdminOrManager" class="flex items-center gap-4">
-          <div class="text-sm text-muted-foreground">
+          <div class="text-sm text-white/50 light:text-gray-500">
             <Users class="h-4 w-4 inline mr-1" />
             {{ transfersStore.queueCount }} waiting in queue
           </div>
@@ -355,20 +339,22 @@ function formatTimeRemaining(deadline: string | undefined): string {
       <div class="p-6 space-y-6">
         <!-- Loading skeleton -->
         <div v-if="isLoading" class="space-y-4">
-          <Skeleton class="h-12 w-full" />
-          <Skeleton class="h-64 w-full" />
+          <Skeleton class="h-12 w-full bg-white/[0.08] light:bg-gray-200 rounded-xl" />
+          <Skeleton class="h-64 w-full bg-white/[0.08] light:bg-gray-200 rounded-xl" />
         </div>
 
         <!-- Agent View (no tabs, just their transfers) -->
         <div v-else-if="!isAdminOrManager">
-          <Card>
-            <CardHeader>
-              <CardTitle>My Transfers</CardTitle>
-              <CardDescription>Contacts transferred to you for human support</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div v-if="myTransfers.length === 0" class="text-center py-8 text-muted-foreground">
-                <UserX class="h-12 w-12 mx-auto mb-4 opacity-50" />
+          <div class="rounded-xl border border-white/[0.08] bg-white/[0.02] light:bg-white light:border-gray-200">
+            <div class="p-6">
+              <h3 class="text-lg font-semibold text-white light:text-gray-900">My Transfers</h3>
+              <p class="text-sm text-white/50 light:text-gray-500">Contacts transferred to you for human support</p>
+            </div>
+            <div class="px-6 pb-6">
+              <div v-if="myTransfers.length === 0" class="text-center py-8 text-white/50 light:text-gray-500">
+                <div class="h-16 w-16 rounded-xl bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+                  <UserX class="h-8 w-8 text-red-400" />
+                </div>
                 <p>No active transfers assigned to you</p>
                 <p class="text-sm mt-2">Click "Pick Next" to get a transfer from the queue</p>
               </div>
@@ -419,8 +405,8 @@ function formatTimeRemaining(deadline: string | undefined): string {
                   </TableRow>
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
 
         <!-- Admin/Manager View (with tabs) -->

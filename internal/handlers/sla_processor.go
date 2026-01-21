@@ -422,13 +422,6 @@ func (p *SLAProcessor) processClientInactivity(orgID uuid.UUID, settings models.
 			continue
 		}
 
-		// Skip if client has replied after chatbot's last message
-		if contact.LastMessageAt != nil && contact.ChatbotLastMessageAt != nil {
-			if contact.LastMessageAt.After(*contact.ChatbotLastMessageAt) {
-				continue
-			}
-		}
-
 		// Calculate time since chatbot's last message
 		timeSinceChatbotMsg := now.Sub(*contact.ChatbotLastMessageAt)
 

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shridarpatil/whatomate/internal/config"
 	"github.com/shridarpatil/whatomate/internal/handlers"
+	"github.com/shridarpatil/whatomate/internal/middleware"
 	"github.com/shridarpatil/whatomate/internal/models"
 	"github.com/shridarpatil/whatomate/test/testutil"
 	"github.com/stretchr/testify/assert"
@@ -20,11 +21,12 @@ import (
 
 const testJWTSecret = "test-secret-key-must-be-at-least-32-chars"
 
-// testApp creates an App instance for testing with a test database.
+// testApp creates an App instance for testing with a test database and Redis.
 func testApp(t *testing.T) *handlers.App {
 	t.Helper()
 
 	db := testutil.SetupTestDB(t)
+	redis := testutil.SetupTestRedis(t)
 	log := testutil.NopLogger()
 
 	cfg := &config.Config{
@@ -38,6 +40,7 @@ func testApp(t *testing.T) *handlers.App {
 	return &handlers.App{
 		Config: cfg,
 		DB:     db,
+		Redis:  redis,
 		Log:    log,
 	}
 }
@@ -61,7 +64,7 @@ func createTestOrganization(t *testing.T, app *handlers.App) *models.Organizatio
 }
 
 // createTestUser creates a test user in the database with a hashed password.
-func createTestUser(t *testing.T, app *handlers.App, orgID uuid.UUID, email, password string, role models.Role, isActive bool) *models.User {
+func createTestUser(t *testing.T, app *handlers.App, orgID uuid.UUID, email, password string, roleID *uuid.UUID, isActive bool) *models.User {
 	t.Helper()
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -73,7 +76,7 @@ func createTestUser(t *testing.T, app *handlers.App, orgID uuid.UUID, email, pas
 		Email:          email,
 		PasswordHash:   string(hashedPassword),
 		FullName:       "Test User",
-		Role:           role,
+		RoleID:         roleID,
 		IsActive:       true, // Create with default, then update if needed
 	}
 	require.NoError(t, app.DB.Create(user).Error)
@@ -90,11 +93,11 @@ func createTestUser(t *testing.T, app *handlers.App, orgID uuid.UUID, email, pas
 func generateTestRefreshToken(t *testing.T, user *models.User, secret string, expiry time.Duration) string {
 	t.Helper()
 
-	claims := handlers.JWTClaims{
+	claims := middleware.JWTClaims{
 		UserID:         user.ID,
 		OrganizationID: user.OrganizationID,
 		Email:          user.Email,
-		Role:           user.Role,
+		RoleID:         user.RoleID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -123,7 +126,7 @@ func TestApp_Login_Success(t *testing.T) {
 	org := createTestOrganization(t, app)
 	email := uniqueEmail("login-success")
 	password := "validpassword123"
-	createTestUser(t, app, org.ID, email, password, models.RoleAdmin, true)
+	createTestUser(t, app, org.ID, email, password, nil, true)
 
 	req := testutil.NewJSONRequest(t, map[string]string{
 		"email":    email,
@@ -161,7 +164,7 @@ func TestApp_Login_WrongPassword(t *testing.T) {
 	app := testApp(t)
 	org := createTestOrganization(t, app)
 	email := uniqueEmail("wrong-pwd")
-	createTestUser(t, app, org.ID, email, "correctpassword", models.RoleAdmin, true)
+	createTestUser(t, app, org.ID, email, "correctpassword", nil, true)
 
 	req := testutil.NewJSONRequest(t, map[string]string{
 		"email":    email,
@@ -190,7 +193,7 @@ func TestApp_Login_InactiveUser(t *testing.T) {
 	app := testApp(t)
 	org := createTestOrganization(t, app)
 	email := uniqueEmail("inactive")
-	createTestUser(t, app, org.ID, email, "validpassword123", models.RoleAdmin, false)
+	createTestUser(t, app, org.ID, email, "validpassword123", nil, false)
 
 	req := testutil.NewJSONRequest(t, map[string]string{
 		"email":    email,
@@ -214,37 +217,31 @@ func TestApp_Login_InvalidRequestBody(t *testing.T) {
 	assert.Equal(t, fasthttp.StatusBadRequest, testutil.GetResponseStatusCode(req))
 }
 
-func TestApp_Login_DifferentRoles(t *testing.T) {
-	roles := []models.Role{models.RoleAdmin, models.RoleManager, models.RoleAgent}
+func TestApp_Login_UserWithRole(t *testing.T) {
+	app := testApp(t)
+	org := createTestOrganization(t, app)
+	email := uniqueEmail("role-test")
+	password := "testpassword123"
 
-	for _, role := range roles {
-		t.Run("role_"+string(role), func(t *testing.T) {
-			app := testApp(t)
-			org := createTestOrganization(t, app)
-			email := uniqueEmail("role-" + string(role))
-			password := "testpassword123"
-			createTestUser(t, app, org.ID, email, password, role, true)
-
-			req := testutil.NewJSONRequest(t, map[string]string{
-				"email":    email,
-				"password": password,
-			})
-
-			err := app.Login(req)
-			require.NoError(t, err)
-			assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
-
-			var resp struct {
-				Data struct {
-					User struct {
-						Role string `json:"role"`
-					} `json:"user"`
-				} `json:"data"`
-			}
-			_ = json.Unmarshal(testutil.GetResponseBody(req), &resp)
-			assert.Equal(t, string(role), resp.Data.User.Role)
-		})
+	// Create an actual role first
+	role := &models.CustomRole{
+		BaseModel:      models.BaseModel{ID: uuid.New()},
+		OrganizationID: org.ID,
+		Name:           "Test Role " + uuid.New().String()[:8],
+		IsSystem:       false,
 	}
+	require.NoError(t, app.DB.Create(role).Error)
+
+	createTestUser(t, app, org.ID, email, password, &role.ID, true)
+
+	req := testutil.NewJSONRequest(t, map[string]string{
+		"email":    email,
+		"password": password,
+	})
+
+	err := app.Login(req)
+	require.NoError(t, err)
+	assert.Equal(t, fasthttp.StatusOK, testutil.GetResponseStatusCode(req))
 }
 
 func TestApp_Register_Success(t *testing.T) {
@@ -268,9 +265,10 @@ func TestApp_Register_Success(t *testing.T) {
 			AccessToken  string `json:"access_token"`
 			RefreshToken string `json:"refresh_token"`
 			User         struct {
+				ID       string `json:"id"`
 				Email    string `json:"email"`
 				FullName string `json:"full_name"`
-				Role     string `json:"role"`
+				RoleID   string `json:"role_id"`
 				IsActive bool   `json:"is_active"`
 			} `json:"user"`
 		} `json:"data"`
@@ -283,15 +281,24 @@ func TestApp_Register_Success(t *testing.T) {
 	assert.NotEmpty(t, resp.Data.RefreshToken)
 	assert.Equal(t, email, resp.Data.User.Email)
 	assert.Equal(t, "New User", resp.Data.User.FullName)
-	assert.Equal(t, "admin", resp.Data.User.Role)
+	assert.NotEmpty(t, resp.Data.User.RoleID, "User should have a role assigned")
 	assert.True(t, resp.Data.User.IsActive)
+
+	// Verify the user has admin role in the database
+	userID, err := uuid.Parse(resp.Data.User.ID)
+	require.NoError(t, err)
+	var user models.User
+	require.NoError(t, app.DB.Preload("Role").Where("id = ?", userID).First(&user).Error)
+	assert.NotNil(t, user.Role)
+	assert.Equal(t, "admin", user.Role.Name)
+	assert.True(t, user.Role.IsSystem)
 }
 
 func TestApp_Register_EmailAlreadyExists(t *testing.T) {
 	app := testApp(t)
 	org := createTestOrganization(t, app)
 	email := uniqueEmail("existing")
-	createTestUser(t, app, org.ID, email, "password123", models.RoleAdmin, true)
+	createTestUser(t, app, org.ID, email, "password123", nil, true)
 
 	req := testutil.NewJSONRequest(t, map[string]string{
 		"email":             email,
@@ -320,7 +327,7 @@ func TestApp_Register_InvalidRequestBody(t *testing.T) {
 func TestApp_RefreshToken_Success(t *testing.T) {
 	app := testApp(t)
 	org := createTestOrganization(t, app)
-	user := createTestUser(t, app, org.ID, uniqueEmail("refresh"), "password123", models.RoleAdmin, true)
+	user := createTestUser(t, app, org.ID, uniqueEmail("refresh"), "password123", nil, true)
 	refreshToken := generateTestRefreshToken(t, user, testJWTSecret, 7*24*time.Hour)
 
 	req := testutil.NewJSONRequest(t, map[string]string{
@@ -351,7 +358,7 @@ func TestApp_RefreshToken_Success(t *testing.T) {
 func TestApp_RefreshToken_Expired(t *testing.T) {
 	app := testApp(t)
 	org := createTestOrganization(t, app)
-	user := createTestUser(t, app, org.ID, uniqueEmail("expired"), "password123", models.RoleAdmin, true)
+	user := createTestUser(t, app, org.ID, uniqueEmail("expired"), "password123", nil, true)
 	expiredToken := generateTestRefreshToken(t, user, testJWTSecret, -time.Hour)
 
 	req := testutil.NewJSONRequest(t, map[string]string{
@@ -366,7 +373,7 @@ func TestApp_RefreshToken_Expired(t *testing.T) {
 func TestApp_RefreshToken_InvalidSignature(t *testing.T) {
 	app := testApp(t)
 	org := createTestOrganization(t, app)
-	user := createTestUser(t, app, org.ID, uniqueEmail("invalid-sig"), "password123", models.RoleAdmin, true)
+	user := createTestUser(t, app, org.ID, uniqueEmail("invalid-sig"), "password123", nil, true)
 	wrongSecretToken := generateTestRefreshToken(t, user, "wrong-secret-key-that-is-long", 7*24*time.Hour)
 
 	req := testutil.NewJSONRequest(t, map[string]string{
@@ -386,7 +393,6 @@ func TestApp_RefreshToken_UserNotFound(t *testing.T) {
 		},
 		OrganizationID: uuid.New(),
 		Email:          "fake@example.com",
-		Role:           models.RoleAdmin,
 	}
 	token := generateTestRefreshToken(t, fakeUser, testJWTSecret, 7*24*time.Hour)
 
@@ -402,7 +408,7 @@ func TestApp_RefreshToken_UserNotFound(t *testing.T) {
 func TestApp_RefreshToken_DisabledUser(t *testing.T) {
 	app := testApp(t)
 	org := createTestOrganization(t, app)
-	user := createTestUser(t, app, org.ID, uniqueEmail("disabled"), "password123", models.RoleAdmin, false)
+	user := createTestUser(t, app, org.ID, uniqueEmail("disabled"), "password123", nil, false)
 	token := generateTestRefreshToken(t, user, testJWTSecret, 7*24*time.Hour)
 
 	req := testutil.NewJSONRequest(t, map[string]string{
@@ -442,7 +448,7 @@ func TestApp_GeneratedTokensAreValid(t *testing.T) {
 	app := testApp(t)
 	org := createTestOrganization(t, app)
 	email := uniqueEmail("tokentest")
-	user := createTestUser(t, app, org.ID, email, "password123", models.RoleAdmin, true)
+	user := createTestUser(t, app, org.ID, email, "password123", nil, true)
 
 	req := testutil.NewJSONRequest(t, map[string]string{
 		"email":    email,
@@ -463,28 +469,28 @@ func TestApp_GeneratedTokensAreValid(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify access token can be parsed
-	accessToken, err := jwt.ParseWithClaims(resp.Data.AccessToken, &handlers.JWTClaims{}, func(token *jwt.Token) (any, error) {
+	accessToken, err := jwt.ParseWithClaims(resp.Data.AccessToken, &middleware.JWTClaims{}, func(token *jwt.Token) (any, error) {
 		return []byte(testJWTSecret), nil
 	})
 	require.NoError(t, err)
 	require.True(t, accessToken.Valid)
 
-	accessClaims, ok := accessToken.Claims.(*handlers.JWTClaims)
+	accessClaims, ok := accessToken.Claims.(*middleware.JWTClaims)
 	require.True(t, ok)
 	assert.Equal(t, user.ID, accessClaims.UserID)
 	assert.Equal(t, org.ID, accessClaims.OrganizationID)
 	assert.Equal(t, user.Email, accessClaims.Email)
-	assert.Equal(t, user.Role, accessClaims.Role)
+	assert.Equal(t, user.RoleID, accessClaims.RoleID)
 	assert.Equal(t, "whatomate", accessClaims.Issuer)
 
 	// Verify refresh token can be parsed
-	refreshToken, err := jwt.ParseWithClaims(resp.Data.RefreshToken, &handlers.JWTClaims{}, func(token *jwt.Token) (any, error) {
+	refreshToken, err := jwt.ParseWithClaims(resp.Data.RefreshToken, &middleware.JWTClaims{}, func(token *jwt.Token) (any, error) {
 		return []byte(testJWTSecret), nil
 	})
 	require.NoError(t, err)
 	require.True(t, refreshToken.Valid)
 
-	refreshClaims, ok := refreshToken.Claims.(*handlers.JWTClaims)
+	refreshClaims, ok := refreshToken.Claims.(*middleware.JWTClaims)
 	require.True(t, ok)
 	assert.Equal(t, user.ID, refreshClaims.UserID)
 }
