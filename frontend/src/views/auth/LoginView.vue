@@ -98,8 +98,8 @@ const initiateSSO = (provider: string) => {
             <MessageSquare class="h-7 w-7 text-white" />
           </div>
         </div>
-        <CardTitle class="text-2xl font-bold">Welcome to RelayOne</CardTitle>
-        <CardDescription>
+        <h2 class="text-2xl font-bold text-white light:text-gray-900">Welcome to RelayOne</h2>
+        <p class="text-white/50 light:text-gray-500">
           Enter your credentials to access your account
         </p>
       </div>
@@ -159,7 +159,14 @@ const initiateSSO = (provider: string) => {
         </Button>
       </div>
 
-
-    </Card>
+      <div class="px-8 pb-8">
+        <p class="text-sm text-center text-white/40 light:text-gray-500">
+          Don't have an account?
+          <RouterLink to="/register" class="text-emerald-400 light:text-emerald-600 hover:underline">
+            Sign up
+          </RouterLink>
+        </p>
+      </div>
+    </div>
   </div>
 </template>
