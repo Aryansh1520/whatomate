@@ -143,3 +143,61 @@ test.describe('Users - Role-based Access', () => {
     // This test should be updated based on actual RBAC implementation
   })
 })
+
+test.describe('Users - Table Sorting', () => {
+  let tablePage: TablePage
+
+  test.beforeEach(async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/settings/users')
+    await page.waitForLoadState('networkidle')
+    tablePage = new TablePage(page)
+  })
+
+  test('should have default sort by user name ascending', async () => {
+    // UsersView defaults to sorting by full_name ascending
+    await tablePage.expectSortDirection('User', 'asc')
+  })
+
+  test('should toggle sort direction on column click', async () => {
+    // User column is already sorted ascending by default
+    // First click toggles to descending
+    await tablePage.clickColumnHeader('User')
+    await tablePage.expectSortDirection('User', 'desc')
+
+    // Second click toggles back to ascending
+    await tablePage.clickColumnHeader('User')
+    await tablePage.expectSortDirection('User', 'asc')
+  })
+
+  test('should sort by created date', async () => {
+    await tablePage.clickColumnHeader('Created')
+    const direction = await tablePage.getSortDirection('Created')
+    expect(direction).not.toBeNull()
+  })
+
+  test('should sort by status', async () => {
+    await tablePage.clickColumnHeader('Status')
+    const direction = await tablePage.getSortDirection('Status')
+    expect(direction).not.toBeNull()
+  })
+
+  test('should sort by role', async () => {
+    await tablePage.clickColumnHeader('Role')
+    const direction = await tablePage.getSortDirection('Role')
+    expect(direction).not.toBeNull()
+  })
+
+  test('should change sort column when clicking different header', async () => {
+    // User is already sorted ascending by default
+    await tablePage.expectSortDirection('User', 'asc')
+
+    // Click Created - switches to that column with desc direction
+    await tablePage.clickColumnHeader('Created')
+    await tablePage.expectSortDirection('Created', 'desc')
+
+    // User column should no longer show sort indicator
+    const userSort = await tablePage.getSortDirection('User')
+    expect(userSort).toBeNull()
+  })
+})

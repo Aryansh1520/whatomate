@@ -230,6 +230,32 @@ export class TableSettingsPage extends BasePage {
   async expectRowNotExists(text: string) {
     await expect(this.table).not.toContainText(text)
   }
+
+  // Sorting helpers
+  getColumnHeader(columnName: string): Locator {
+    return this.page.locator('thead th').filter({ hasText: columnName })
+  }
+
+  async clickColumnHeader(columnName: string) {
+    await this.getColumnHeader(columnName).click()
+    await this.page.waitForTimeout(300)
+  }
+
+  async getSortDirection(columnName: string): Promise<'asc' | 'desc' | null> {
+    const header = this.getColumnHeader(columnName)
+    // Lucide icons render with class like 'lucide-arrow-up-icon'
+    const arrowUp = header.locator('.lucide-arrow-up-icon')
+    const arrowDown = header.locator('.lucide-arrow-down-icon')
+
+    if (await arrowUp.count() > 0) return 'asc'
+    if (await arrowDown.count() > 0) return 'desc'
+    return null
+  }
+
+  async expectSortDirection(columnName: string, direction: 'asc' | 'desc') {
+    const actual = await this.getSortDirection(columnName)
+    expect(actual).toBe(direction)
+  }
 }
 
 /**
