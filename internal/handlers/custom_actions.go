@@ -85,10 +85,10 @@ func (a *App) ListCustomActions(r *fastglue.Request) error {
 
 	query := a.DB.Model(&models.CustomAction{}).Where("organization_id = ?", orgID)
 
-	// Apply search filter - search by name or description (case-insensitive)
+	// Apply search filter - search by name (case-insensitive)
 	if search != "" {
 		searchPattern := "%" + search + "%"
-		query = query.Where("name ILIKE ? OR description ILIKE ?", searchPattern, searchPattern)
+		query = query.Where("name ILIKE ?", searchPattern)
 	}
 
 	var total int64
