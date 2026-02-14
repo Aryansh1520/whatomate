@@ -48,7 +48,7 @@ async function globalSetup() {
       console.log(`  ✅ Logged in as superadmin: ${defaultAdmin.email}`)
     } else {
       console.log(`  ❌ Failed to login as superadmin: ${await loginResponse.text()}`)
-      console.log(`  ℹ️  Make sure migrations have run (./whatomate server -migrate)`)
+      console.log(`  ℹ️  Make sure migrations have run (./RelayOne server -migrate)`)
     }
   } catch (error) {
     console.log(`  ❌ Error logging in as superadmin:`, error)

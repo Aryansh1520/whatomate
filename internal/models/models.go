@@ -95,6 +95,10 @@ type Organization struct {
 	Users              []User               `gorm:"foreignKey:OrganizationID" json:"users,omitempty"`
 	UserOrganizations  []UserOrganization   `gorm:"foreignKey:OrganizationID" json:"user_organizations,omitempty"`
 	WhatsAppAccounts   []WhatsAppAccount    `gorm:"foreignKey:OrganizationID" json:"whatsapp_accounts,omitempty"`
+
+	//ValidityAssignments []OrganizationValidityAssignment `gorm:"foreignKey:OrganizationID" json:"validity_assignments,omitempty"`
+	ValidFrom time.Time `gorm:"type:timestamptz;not null" json:"valid_from"`
+	ValidTo   time.Time `gorm:"type:timestamptz;not null" json:"valid_to"`
 }
 
 func (Organization) TableName() string {
@@ -460,4 +464,23 @@ type WidgetFilter struct {
 	Field    string `json:"field"`    // status, direction, type, etc.
 	Operator string `json:"operator"` // equals, not_equals, contains, gt, lt, gte, lte
 	Value    string `json:"value"`
+}
+
+type OrganizationValidityAssignment struct {
+	BaseModel
+
+	OrganizationID uuid.UUID `gorm:"type:uuid;not null;index" json:"organization_id"`
+
+	ValidFrom time.Time `gorm:"type:timestamptz;not null" json:"valid_from"`
+	ValidTo   time.Time `gorm:"type:timestamptz;not null" json:"valid_to"`
+
+	// Price stored in INR paise or rupees? (see note below)
+	PriceINR int64 `gorm:"not null" json:"price_inr"`
+
+	// Optional but strongly recommended
+	AssignedByUserID uuid.UUID `gorm:"type:uuid;not null" json:"assigned_by_user_id"`
+}
+
+func (OrganizationValidityAssignment) TableName() string {
+	return "organization_validity_assignments"
 }

@@ -57,7 +57,7 @@ func GetMigrationModels() []MigrationModel {
 	return []MigrationModel{
 		// Core models
 		{"Organization", &models.Organization{}},
-		{"Permission", &models.Permission{}},
+
 		{"CustomRole", &models.CustomRole{}},
 		{"User", &models.User{}},
 		{"UserOrganization", &models.UserOrganization{}},
@@ -104,6 +104,8 @@ func GetMigrationModels() []MigrationModel {
 
 		// Conversation Notes
 		{"ConversationNote", &models.ConversationNote{}},
+		// Organization validity assignments
+		{"OrganizationValidityAssignment", &models.OrganizationValidityAssignment{}},
 	}
 }
 

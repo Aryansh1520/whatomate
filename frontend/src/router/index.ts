@@ -22,12 +22,12 @@ const router = createRouter({
       component: () => import('@/views/auth/LoginView.vue'),
       meta: { requiresAuth: false }
     },
-    {
-      path: '/register',
-      name: 'register',
-      component: () => import('@/views/auth/RegisterView.vue'),
-      meta: { requiresAuth: false }
-    },
+    // {
+    //   path: '/register',
+    //   name: 'register',
+    //   component: () => import('@/views/auth/RegisterView.vue'),
+    //   meta: { requiresAuth: false }
+    // },
     {
       path: '/auth/sso/callback',
       name: 'sso-callback',
@@ -206,12 +206,12 @@ const router = createRouter({
           component: () => import('@/views/settings/WebhooksView.vue'),
           meta: { permission: 'webhooks' }
         },
-        {
-          path: 'settings/sso',
-          name: 'sso-settings',
-          component: () => import('@/views/settings/SSOSettingsView.vue'),
-          meta: { permission: 'settings.sso' }
-        },
+        // {
+        //   path: 'settings/sso',
+        //   name: 'sso-settings',
+        //   component: () => import('@/views/settings/SSOSettingsView.vue'),
+        //   meta: { permission: 'settings.sso' }
+        // },
         {
           path: 'settings/custom-actions',
           name: 'custom-actions',

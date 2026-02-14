@@ -468,7 +468,7 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 		path := string(r.RequestCtx.Path())
 		// Skip auth for public routes
 		if path == "/health" || path == "/ready" ||
-			path == "/api/auth/login" || path == "/api/auth/register" || path == "/api/auth/refresh" ||
+			path == "/api/auth/login" || path == "/api/auth/refresh" ||
 			path == "/api/auth/logout" || path == "/api/webhook" || path == "/ws" {
 			return r
 		}
@@ -481,9 +481,21 @@ func setupRoutes(g *fastglue.Fastglue, app *handlers.App, lo logf.Logger, basePa
 			return r
 		}
 		// Apply auth for all other /api routes (supports both JWT and API key)
-		if len(path) > 4 && path[:4] == "/api" {
-			return middleware.AuthWithDB(app.Config.JWT.Secret, app.DB)(r)
-		}
+if len(path) > 4 && path[:4] == "/api" {
+    middlewares := []fastglue.FastMiddleware{
+        middleware.AuthWithDB(app.Config.JWT.Secret, app.DB),
+        middleware.OrganizationContext(app.DB),
+        middleware.OrganizationValidity(),
+    }
+
+    for _, mw := range middlewares {
+        r = mw(r)
+        if r == nil {
+            return nil
+        }
+    }
+}
+
 		return r
 	})
 

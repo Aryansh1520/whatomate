@@ -112,7 +112,7 @@ export const navigationItems: NavItem[] = [
       { name: 'nav.apiKeys', path: '/settings/api-keys', icon: Key, permission: 'api_keys' },
       { name: 'nav.webhooks', path: '/settings/webhooks', icon: Webhook, permission: 'webhooks' },
       { name: 'nav.customActions', path: '/settings/custom-actions', icon: Zap, permission: 'custom_actions' },
-      { name: 'nav.sso', path: '/settings/sso', icon: ShieldCheck, permission: 'settings.sso' }
+      // { name: 'nav.sso', path: '/settings/sso', icon: ShieldCheck, permission: 'settings.sso' }
     ]
   }
 ]
